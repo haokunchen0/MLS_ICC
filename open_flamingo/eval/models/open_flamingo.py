@@ -157,7 +157,6 @@ class EvalModel(BaseEvalModel):
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
         all_class_names: List[str],
-        use_cache: bool,
     ):
         """
         Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
@@ -165,38 +164,24 @@ class EvalModel(BaseEvalModel):
         batch_images = self._prepare_images(batch_images)
         ctx_input_ids, ctx_attention_mask = self._prepare_text(batch_text)
 
-        # Cache the context
-        if use_cache:
-            # reserve the last token in the context for the main forward pass
-            self.cache_media(
-                input_ids=ctx_input_ids,
-                vision_x=batch_images,
-            )
-
-        classnames_tokens = self.tokenizer(
-                all_class_names
-            )["input_ids"]
-        # Concatenate the class name tokens
-        if not use_cache:
-            _lang_x = torch.cat([ctx_input_ids], dim=1)
-            _attention_mask = torch.cat(
-                [
-                    ctx_attention_mask,
-                ],
-                dim=1,
-            )
-            _vision_x = batch_images
-        else:
-            _lang_x = None
-            _attention_mask = None
-            _vision_x = None
-        
+        _lang_x = torch.cat([ctx_input_ids], dim=1)
+        _attention_mask = torch.cat(
+            [
+                ctx_attention_mask,
+            ],
+            dim=1,
+        )
+        _vision_x = batch_images
+ 
         outputs = self.__call__(
             vision_x=_vision_x,
             lang_x=_lang_x,
             attention_mask=_attention_mask,
-            use_cache=use_cache
         )
+
+        classnames_tokens = self.tokenizer(
+                all_class_names
+            )["input_ids"]
 
         overall_probs = []
         batch_size = outputs.scores[0].shape[0]
@@ -211,7 +196,6 @@ class EvalModel(BaseEvalModel):
                     prob = torch.zeros(batch_size).to(self.device)
             overall_probs.append(prob) # (B, 1)
 
-        self.uncache_media()
         overall_probs = torch.vstack(overall_probs).T.cpu()  # shape (B, num_classes)
         return overall_probs
 
@@ -220,12 +204,10 @@ class EvalModel(BaseEvalModel):
         lang_x: torch.Tensor,
         vision_x: torch.Tensor,
         attention_mask: torch.Tensor,
-        past_key_values: torch.Tensor = None,
         min_generation_length: int = 1,
         max_generation_length: int = 20,
         num_beams: int = 1,
         length_penalty: float = 1,
-        use_cache: bool = False,
     ):
         """
         Calls the forward function of the model.
@@ -235,54 +217,23 @@ class EvalModel(BaseEvalModel):
             We then repeatedly call forward, updating the past_key_values.
         """
         # standard forward pass
-        if past_key_values is None:
-            with torch.inference_mode():
-                with self.autocast():
-                    outputs = unwrap_model(self.model).generate(
-                        vision_x,
-                        lang_x,
-                        attention_mask,
-                        min_new_tokens=min_generation_length,
-                        max_new_tokens=max_generation_length,
-                        num_beams=num_beams,
-                        length_penalty=length_penalty,
-                        output_scores=True,
-                        return_dict_in_generate=True,
-                        use_cache=use_cache,
-                    )
-            return outputs
-
-        for token_idx in range(lang_x.shape[1]):
-            _lang_x = lang_x[:, token_idx].reshape((-1, 1))
-            if attention_mask is not None:
-                _attention_mask = attention_mask[:, token_idx].reshape((-1, 1))
-            else:
-                _attention_mask = None
-
-            with torch.inference_mode():
-                with self.autocast():
-                    outputs = unwrap_model(self.model).generate(
-                        vision_x,
-                        _lang_x,
-                        _attention_mask,
-                        min_new_tokens=min_generation_length,
-                        max_new_tokens=max_generation_length,
-                        num_beams=num_beams,
-                        length_penalty=length_penalty,
-                        output_scores=True,
-                        return_dict_in_generate=True,
-                        use_cache=use_cache,
-                    )
+        with torch.inference_mode():
+            with self.autocast():
+                outputs = unwrap_model(self.model).generate(
+                    vision_x,
+                    lang_x,
+                    attention_mask,
+                    min_new_tokens=min_generation_length,
+                    max_new_tokens=max_generation_length,
+                    num_beams=num_beams,
+                    length_penalty=length_penalty,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
             return outputs
 
     def encode_vision_x(self, image_tensor: torch.Tensor):
         unwrap_model(self.model)._encode_vision_x(image_tensor.to(self.device))
-
-    def uncache_media(self):
-        unwrap_model(self.model).uncache_media()
-
-    def cache_media(self, input_ids, vision_x):
-        unwrap_model(self.model).cache_media(input_ids=input_ids, vision_x=vision_x)
 
     def get_imagenet_prompt(self, label=None) -> str:
         return f"<image>Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"

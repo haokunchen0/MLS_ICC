@@ -109,8 +109,6 @@ class EvalModel(BaseEvalModel):
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
         all_class_names: List[str],
-        use_cache: bool,
-        normalize_length: bool,
     ):
         raise NotImplementedError(
             "BLIP-2 classification-based evaluation not implemented"

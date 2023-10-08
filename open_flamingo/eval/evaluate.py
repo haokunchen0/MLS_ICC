@@ -43,7 +43,7 @@ parser.add_argument(
 )
 
 # Trial arguments
-parser.add_argument("--shots", nargs="+", default=[0, 4, 8, 16, 32], type=int)
+parser.add_argument("--shots", nargs="+", default=[0, 1, 2, 4, 8], type=int)
 parser.add_argument(
     "--num_trials",
     type=int,
@@ -67,13 +67,9 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-parser.add_argument("--batch_size", type=int, default=8)
+#parser.add_argument("--batch_size", type=int, default=8)
+parser.add_argument("--batch_size_map", type=str, default="0:40,1:32,2:24,4:16,8:4,16:2,32:1")
 
-parser.add_argument(
-    "--no_caching_for_classification",
-    action="store_true",
-    help="Whether to skip using key-value caching for classification evals, which usually speeds it up.",
-)
 parser.add_argument(
     "--classification_prompt_ensembling",
     action="store_true",
@@ -81,7 +77,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--rices_type",
-    default="none",
+    default=None,
     help="Type to use RICES for evaluation, image or text. If none, uses random demonstrations.",
 )
 parser.add_argument(
@@ -129,10 +125,18 @@ parser.add_argument(
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
 
+def parse_batch_size_map(batch_size_map_str):
+    mapping = {}
+    pairs = batch_size_map_str.split(',')
+    for pair in pairs:
+        shot, batch_size = pair.split(':')
+        mapping[int(shot)] = int(batch_size)
+    return mapping
 
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
+    args.batch_size_map = parse_batch_size_map(args.batch_size_map)
 
     model_args = {
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
@@ -158,21 +162,23 @@ def main():
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
         cached_features = torch.load(
-            f"{args.cached_demonstration_features}/{args.dataset_name}.pkl", map_location="cpu"
+            f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
         )
     else:
         cached_features = None
 
     for shot in args.shots:
+        batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])
+        print(f"Now evaluating on {batch_size} samples...")
         scores = []
         for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
             imagenet_score = evaluate_classification(
                 args,
                 eval_model=eval_model,
                 num_shots=shot,
+                batch_size=batch_size,
                 seed=seed,
-                no_kv_caching=args.no_caching_for_classification,
-                dataset_name="imagenet",
+                dataset_name=args.dataset_name,
                 cached_features=cached_features,
                 use_prompt_ensembling=args.classification_prompt_ensembling,
             )
@@ -202,11 +208,11 @@ def main():
 def evaluate_classification(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
+    batch_size: int,
     seed: int = 42,
     num_shots: int = 8,
     dataset_name: str = "imagenet",
     cached_features=None,
-    no_kv_caching=False,
     use_prompt_ensembling: bool = False,
 ):
     """
@@ -216,7 +222,6 @@ def evaluate_classification(
         eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
         num_shots (int, optional): number of shots to use. Defaults to 8.
-        no_kv_caching (bool): whether to disable key-value caching
         dataset_name (str, optional): dataset name. Defaults to "imagenet".
         cached_features (tensor, optional): cached demonstration features for RICES. Defaults to None.
 
@@ -229,8 +234,8 @@ def evaluate_classification(
         )
 
     if dataset_name == "imagenet":
-        train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
-        test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
+        train_dataset = ImageNetDataset(os.path.join(args.dataset_root, "train"))
+        test_dataset = ImageNetDataset(os.path.join(args.dataset_root, "val"))
         prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = IMAGENET_CLASSNAMES
         k = 5
@@ -278,16 +283,16 @@ def evaluate_classification(
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
-        args.batch_size,
+        batch_size,
     )
 
-    assert args.rices_type in ["image", "text", "none"]
+    assert args.rices_type in ["image", "text", None]
 
     if args.rices_type == "image":
-        rices_dataset = RICES_Image(
+        rices_image_dataset = RICES_Image(
             train_dataset,
             eval_model.device,
-            args.batch_size,
+            batch_size,
             cached_features=cached_features,
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
@@ -298,7 +303,7 @@ def evaluate_classification(
             train_dataset,
             labels,
             eval_model.device,
-            args.batch_size,
+            batch_size,
             cached_features=cached_features,
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
@@ -315,7 +320,7 @@ def evaluate_classification(
         disable=args.rank != 0,
     ):
         if args.rices_type == "image":
-            batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+            batch_demo_samples = rices_image_dataset.find(batch["image"], effective_num_shots)
         elif args.rices_type == "text":
             batch_demo_labels = rices_text_labels.find(batch["image"], 1)
             batch_demo_samples = rices_text_labels.get_images_from_labels(batch_demo_labels, effective_num_shots)
@@ -349,7 +354,7 @@ def evaluate_classification(
 
                 batch_text.append(
                     context_text
-                    + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+                    + prompt_fn({"class_name": None})
                 )
 
             # get predicted class names
@@ -358,7 +363,6 @@ def evaluate_classification(
                     batch_text,
                     batch_images,
                     all_class_names,
-                    use_cache=(not no_kv_caching),
                 )
             )
 
@@ -396,23 +400,11 @@ def evaluate_classification(
         item for sublist in all_predictions for item in sublist
     ]  # flatten
 
-    if dataset_name == "hateful_memes":
-        # return ROC-AUC score
-        greater_label = max(all_class_names)
-        gts = [pred["gt_label"] for pred in all_predictions]
-        pred_scores = [
-            pred["pred_score"]
-            if pred["pred_label"] == greater_label
-            else 1 - pred["pred_score"]
-            for pred in all_predictions
-        ]
-        return roc_auc_score(gts, pred_scores)
-    else:
-        # return top-1 accuracy
-        acc1 = sum(
-            int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions
-        )
-        return float(acc1) / len(all_predictions)
+    # return top-1 accuracy
+    acc1 = sum(
+        int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions
+    )
+    return float(acc1) / len(all_predictions)
 
 
 if __name__ == "__main__":

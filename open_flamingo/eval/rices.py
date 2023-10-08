@@ -197,10 +197,3 @@ class RICES_Text:
             selected_samples = [self.dataset[idx] for idx in selected_indices]
             results.append(selected_samples)
         return results
-
-
-
-
-
-
-

@@ -70,7 +70,6 @@ class BaseEvalModel(abc.ABC):
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
         all_class_names: List[str],
-        use_cache: bool,
         normalize_length: bool,
     ):
         """
@@ -81,7 +80,6 @@ class BaseEvalModel(abc.ABC):
             batch_images: images to provide to model. Should be a list of lists,
                 where each list contains the images for a single example.
             all_class_names: list of all class names.
-            use_cache: whether to cache the context to speed up evaluations.
             normalize_length: whether to normalize logprobs by the length of the
                 class name
         Returns:

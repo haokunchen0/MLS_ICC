@@ -192,7 +192,6 @@ def main():
                 seed=seed,
                 dataset_name=args.dataset_name,
                 cached_features=cached_features,
-                label_cached_features=label_cached_features,
                 use_prompt_ensembling=args.classification_prompt_ensembling,
             )
             if args.rank == 0:

@@ -11,7 +11,7 @@ import torch
 import utils
 import math
 
-from rices import RICES_Image, RICES_Text
+from rices import RICES_Image, RICES_Text, RICES_Both
 from tqdm import tqdm
 from eval_model import BaseEvalModel
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
@@ -22,7 +22,8 @@ from eval_datasets import (
     StanfordCarDataset, 
     StanfordDogDataset,
 )
-
+import transformers
+transformers.logging.set_verbosity_error()
 from classification_utils import (
     IMAGENET_CLASSNAMES,
     CUB_CLASSNAMES,
@@ -159,20 +160,31 @@ def main():
 
     print(f"Evaluating on {args.dataset_name} Dataset...")
 
+    assert args.rices_type in ["image", "text", "both", None]
     # load cached demonstration features for RICES
-    if args.cached_demonstration_features is not None:
-        cached_features = torch.load(
-            f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
-        )
+    if args.cached_demonstration_features is not None and args.rices_type is not None:
+        if args.rices_type == "both":
+            cached_features = [None, None]
+            cached_features[0] = torch.load(
+                f"{args.cached_demonstration_features}/image_{args.dataset_name}.pkl", map_location="cpu"
+            )
+            cached_features[1] = torch.load(
+                f"{args.cached_demonstration_features}/text_{args.dataset_name}.pkl", map_location="cpu"
+            )
+        else:
+            cached_features = torch.load(
+                f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
+            )
     else:
         cached_features = None
 
     for shot in args.shots:
+        results = {f"{args.dataset_name}": []}
         batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])
         print(f"Now evaluating on {batch_size} samples...")
         scores = []
         for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            imagenet_score = evaluate_classification(
+            classification_score = evaluate_classification(
                 args,
                 eval_model=eval_model,
                 num_shots=shot,
@@ -180,29 +192,28 @@ def main():
                 seed=seed,
                 dataset_name=args.dataset_name,
                 cached_features=cached_features,
+                label_cached_features=label_cached_features,
                 use_prompt_ensembling=args.classification_prompt_ensembling,
             )
             if args.rank == 0:
                 print(
                     f"Shots {shot} Trial {trial} "
-                    f"ImageNet score: {imagenet_score}"
+                    f"{args.dataset_name} score: {classification_score}"
                 )
-                scores.append(imagenet_score)
+                scores.append(classification_score)
 
         if args.rank == 0:
-            print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
-            results["imagenet"].append(
+            print(f"Shots {shot} Mean {args.dataset_name} score: {np.nanmean(scores)}")
+            results[f"{args.dataset_name}"].append(
                 {
                     "shots": shot,
-                    "trials": scores,
-                    "mean": np.nanmean(scores),
-                    "stddev": np.nanstd(scores),
+                    "acc": scores,
                 }
             )
-
-    if args.rank == 0 and args.results_file is not None:
-        with open(args.results_file, "a") as f:
-            json.dump(results, f)
+            if args.results_file is not None:
+                with open(args.results_file, "a") as f:
+                    json.dump(results, f)
+                    f.write('\n')
 
 
 def evaluate_classification(
@@ -286,9 +297,18 @@ def evaluate_classification(
         batch_size,
     )
 
-    assert args.rices_type in ["image", "text", None]
+    if args.rices_type == "both":
+        rices_both_dataset = RICES_Both(
+            train_dataset,
+            labels,
+            eval_model.device,
+            batch_size,
+            cached_features=cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
+        )
 
-    if args.rices_type == "image":
+    elif args.rices_type == "image":
         rices_image_dataset = RICES_Image(
             train_dataset,
             eval_model.device,
@@ -317,10 +337,12 @@ def evaluate_classification(
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader),
         desc=f"Running inference {dataset_name}",
-        disable=args.rank != 0,
+        total=len(test_dataloader),
     ):
-        if args.rices_type == "image":
-            batch_demo_samples = rices_image_dataset.find(batch["image"], effective_num_shots)
+        if args.rices_type == "both":
+            batch_demo_samples = rices_both_dataset.find(batch["image"], effective_num_shots)
+        elif args.rices_type == "image":
+            batch_demo_samples, batch_similarity_probs = rices_image_dataset.find(batch["image"], effective_num_shots)
         elif args.rices_type == "text":
             batch_demo_labels = rices_text_labels.find(batch["image"], 1)
             batch_demo_samples = rices_text_labels.get_images_from_labels(batch_demo_labels, effective_num_shots)
@@ -328,7 +350,6 @@ def evaluate_classification(
             batch_demo_samples = utils.sample_batch_demos_from_query_set(
                 query_set, effective_num_shots, len(batch["image"])
             )
-
         # set up prompt ensembling
         num_permutations = (
             min(6, math.factorial(effective_num_shots)) if use_prompt_ensembling else 1

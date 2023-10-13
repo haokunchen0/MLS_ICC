@@ -12,6 +12,7 @@ import utils
 import math
 
 from rices import RICES_Image, RICES_Text, RICES_Both
+from enhancement import Enhancement
 from tqdm import tqdm
 from eval_model import BaseEvalModel
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
@@ -22,15 +23,15 @@ from eval_datasets import (
     StanfordCarDataset, 
     StanfordDogDataset,
 )
-import transformers
-transformers.logging.set_verbosity_error()
+
 from classification_utils import (
     IMAGENET_CLASSNAMES,
     CUB_CLASSNAMES,
     STANFORD_CAR_CLASSNAMES,
     STANFORD_DOG_CLASSNAMES,
 )
-
+import transformers
+transformers.logging.set_verbosity_error()
 parser = argparse.ArgumentParser()
 
 parser.add_argument(
@@ -69,7 +70,7 @@ parser.add_argument(
 )
 
 #parser.add_argument("--batch_size", type=int, default=8)
-parser.add_argument("--batch_size_map", type=str, default="0:40,1:32,2:24,4:16,8:4,16:2,32:1")
+parser.add_argument("--batch_size_map", type=str, default="0:10,1:20,2:10,4:6,8:4,16:2")
 
 parser.add_argument(
     "--classification_prompt_ensembling",
@@ -80,6 +81,16 @@ parser.add_argument(
     "--rices_type",
     default=None,
     help="Type to use RICES for evaluation, image or text. If none, uses random demonstrations.",
+)
+parser.add_argument(
+    "--method_type",
+    default=None,
+    help="ML or T2T"
+)
+parser.add_argument(
+    "--Label_Distribution",
+    action="store_true",
+    help="Whether to use LD to add probability for labels.",
 )
 parser.add_argument(
     "--rices_vision_encoder_path",
@@ -98,7 +109,26 @@ parser.add_argument(
     default=None,
     help="Directory where rices features for all choices of in-context examples are stored as a pkl file with the dataset name. If None, features are re-computed by script.",
 )
-
+parser.add_argument(
+    "--label_cached_demonstration_features",
+    default=None,
+    help="for ML image to label..."
+)
+parser.add_argument(
+    "--rough_desc",
+    action="store_true",
+    help='Whether to roughly describe the multi-label candidates.'
+)
+# parser.add_argument(
+#     "--text_to_text",
+#     action="store_true",
+#     help="Whether to use true labels to find labels."
+# )
+# parser.add_argument(
+#     "--multilabel",
+#     action="store_true",
+#     help="Whether to use multi-label for evaluation."
+# )
 # Dataset arguments
 parser.add_argument("--dataset_name", type=str, default="imagenet")
 parser.add_argument("--dataset_root", type=str, default="/tmp")
@@ -162,7 +192,7 @@ def main():
 
     assert args.rices_type in ["image", "text", "both", None]
     # load cached demonstration features for RICES
-    if args.cached_demonstration_features is not None and args.rices_type is not None:
+    if args.cached_demonstration_features is not None:
         if args.rices_type == "both":
             cached_features = [None, None]
             cached_features[0] = torch.load(
@@ -177,7 +207,13 @@ def main():
             )
     else:
         cached_features = None
-
+    if args.method_type != "normal":
+        label_cached_features = torch.load(
+                f"/data/zihan/icl/text_{args.dataset_name}.pkl", map_location="cpu"
+            )
+    else:
+        label_cached_features = None    
+        
     for shot in args.shots:
         results = {f"{args.dataset_name}": []}
         batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])
@@ -192,6 +228,7 @@ def main():
                 seed=seed,
                 dataset_name=args.dataset_name,
                 cached_features=cached_features,
+                label_cached_features=label_cached_features,
                 use_prompt_ensembling=args.classification_prompt_ensembling,
             )
             if args.rank == 0:
@@ -223,6 +260,7 @@ def evaluate_classification(
     num_shots: int = 8,
     dataset_name: str = "imagenet",
     cached_features=None,
+    label_cached_features=None,
     use_prompt_ensembling: bool = False,
 ):
     """
@@ -295,7 +333,7 @@ def evaluate_classification(
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
     )
-
+    # Choose rices types
     if args.rices_type == "both":
         rices_both_dataset = RICES_Both(
             train_dataset,
@@ -318,7 +356,7 @@ def evaluate_classification(
         )
     elif args.rices_type == "text":
         print("rices_text has been activated...")
-        rices_text_labels = RICES_Text(
+        rices_text = RICES_Text(
             train_dataset,
             labels,
             eval_model.device,
@@ -326,25 +364,57 @@ def evaluate_classification(
             cached_features=cached_features,
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
+            label_distribution=args.Label_Distribution,
         )
     else:
         # subset of the training set to sample context images from
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
-
+        
+    # Enhancement methods.
+    if args.method_type == "ML" or args.method_type == "T2T" or args.Label_Distribution:
+        if args.Label_Distribution:
+            print("LD is activated...")
+        if args.method_type == "ML":
+            print("multilabel has been activated...")
+        if args.method_type == "T2T":
+            print("Label find similiar labels has been activated...")
+        enhancement = Enhancement(
+            train_dataset,
+            labels,
+            eval_model.device,
+            batch_size,
+            cached_features=label_cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
+            label_distribution=args.Label_Distribution,
+        )
+    if args.method_type == "ML" and args.rough_desc and not args.Label_Distribution:
+        enhancement1 = Enhancement(
+            train_dataset,
+            labels,
+            eval_model.device,
+            batch_size,
+            cached_features=label_cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
+            rough_desc=args.rough_desc
+        )
+        
     utils.random_seed(seed, args.rank)
     predictions = []
-    for batch_idx, batch in tqdm(
+    cnt=0
+    for _, batch in tqdm(
         enumerate(test_dataloader),
-        desc=f"Running inference {dataset_name}",
+        desc=f"Running inference {dataset_name},{num_shots}",
         total=len(test_dataloader),
     ):
         if args.rices_type == "both":
             batch_demo_samples = rices_both_dataset.find(batch["image"], effective_num_shots)
         elif args.rices_type == "image":
-            batch_demo_samples, batch_similarity_probs = rices_image_dataset.find(batch["image"], effective_num_shots)
+            batch_demo_samples, similar_probs = rices_image_dataset.find(batch["image"], effective_num_shots)
         elif args.rices_type == "text":
-            batch_demo_labels = rices_text_labels.find(batch["image"], 1)
-            batch_demo_samples = rices_text_labels.get_images_from_labels(batch_demo_labels, effective_num_shots)
+            batch_demo_labels = rices_text.find(batch["image"], 1)
+            batch_demo_samples = rices_text.get_images_from_labels(batch_demo_labels, effective_num_shots)
         else:
             batch_demo_samples = utils.sample_batch_demos_from_query_set(
                 query_set, effective_num_shots, len(batch["image"])
@@ -359,24 +429,84 @@ def evaluate_classification(
             for i in range(len(batch["image"])):
                 if use_prompt_ensembling:
                     random.shuffle(batch_demo_samples[i])
-
+                
                 if effective_num_shots > 0:
                     context_images = [x["image"] for x in batch_demo_samples[i]]
                 else:
                     context_images = []
                 batch_images.append(context_images + [batch["image"][i]])
+                if args.method_type == "normal":
+                    context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
 
-                context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                    # Keep the text but remove the image tags for the zero-shot case
+                    if num_shots == 0:
+                        context_text = context_text.replace("<image>", "")
 
-                # Keep the text but remove the image tags for the zero-shot case
-                if num_shots == 0:
-                    context_text = context_text.replace("<image>", "")
+                    batch_text.append(
+                        context_text
+                        + prompt_fn({"class_name": None})
+                    )
+                elif args.method_type == "T2T":
+                    # 获取当前batch中所有图片的真实标签作为查询
+                    true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
+                    
+                    # 使用这些真实标签找到相似的标签
+                    shots_labels_for_current_batch = enhancement.find_similar_labels(true_labels_for_current_batch, 2)
 
-                batch_text.append(
-                    context_text
-                    + prompt_fn({"class_name": None})
-                )
+                    # 将每张图片的标签（真实标签 + 相似标签）连接起来
+                    if args.Label_Distribution:
+                        labels_for_each_image = [",".join([true_label] + similar_labels) 
+                                                for true_label, similar_labels in zip(true_labels_for_current_batch, shots_labels_for_current_batch)]
+                    else:
+                        labels_for_each_image = [",".join([true_label] + similar_labels) 
+                                                for true_label, similar_labels in zip(true_labels_for_current_batch, shots_labels_for_current_batch)]
+                    # 使用prompt_fn函数生成每张图片的prompt
+                    prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
 
+                    # 将所有图片的prompt连接起来
+                    context_text = "".join(prompts_for_each_image)
+                    if num_shots == 0:
+                        context_text = context_text.replace("<image>", "")
+                        # Keep the text but remove the image tags for the zero-shot case
+                    batch_text.append(
+                        context_text
+                        + prompt_fn({"class_name": None})
+                    )
+                else:
+                    true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
+                    if not args.rough_desc:
+
+                        # 获取当前batch中所有图片的相似标签
+                        similar_labels_for_batch = enhancement.Multilabel([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 2)
+                        
+                        # 将真实标签和相似标签组合
+                        combined_labels_for_batch = []
+                        for true_label, similar_labels in zip(true_labels_for_current_batch, similar_labels_for_batch):
+                            if args.Label_Distribution: 
+                                combined_labels = [true_label] + similar_labels
+                            else:
+                                combined_labels = [true_label] + similar_labels
+                            combined_labels_for_batch.append(combined_labels)
+                        # 将每张图片的标签连接起来
+                        labels_for_each_image = [",".join(labels) for labels in combined_labels_for_batch]
+
+                        # 使用prompt_fn函数生成每张图片的prompt
+                        prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
+                    else:
+                        prompts_for_each_image = enhancement1.Multilabel([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 2)
+
+                    # 将所有图片的prompt连接起来
+                    context_text = "".join(prompts_for_each_image)
+                    if num_shots == 0:
+                        context_text = context_text.replace("<image>", "")
+                        # Keep the text but remove the image tags for the zero-shot case
+                    batch_text.append(
+                        context_text
+                        + prompt_fn({"class_name": None})
+                        )
+            if cnt == 0:
+                print(batch_text[0])
+                cnt += 1
             # get predicted class names
             logprobs.append(
                 eval_model.get_rank_classifications(

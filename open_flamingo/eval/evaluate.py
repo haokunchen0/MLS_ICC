@@ -11,7 +11,7 @@ import torch
 import utils
 import math
 
-from rices import RICES_Image, RICES_Text, RICES_Both
+from rices import RICES_Image, RICES_Text
 from enhancement import Enhancement
 from tqdm import tqdm
 from eval_model import BaseEvalModel
@@ -84,7 +84,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--method_type",
-    default=None,
+    default="normal",
     help="ML or T2T"
 )
 parser.add_argument(

@@ -1,3 +1,7 @@
 *.pyc
 results
-*.sh
+*.pkl
+*.ipynb
+*.json
+*.txt
+bash_run-hyh

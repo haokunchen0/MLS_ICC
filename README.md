@@ -34,7 +34,9 @@ pip install -e .
 
 Download the OpenFlamingo v2 3B model from this [link](https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b).
 
-You can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
+Before starting the evaluation, make sure you have already cached both the image features (please refer to `cache_rices_image_features.py`) and textual features (please refer to `cache_rices_text_features.py`).
+
+Then, you can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
 
 ```bash
 python open_flamingo/eval/evaluate.py \
@@ -56,8 +58,8 @@ python open_flamingo/eval/evaluate.py \
     --Label_Distribution \
 
     # Optional parameters: 
-    # --method_type is the label enhancement method in our thesis.
-    # --description is the visual enhancement method in our thesis.
+    # --method_type is the label enhancement method in our paper.
+    # --description is the visual enhancement method in our paper.
     # --ensemble is a combination of the two.
     # --OP is the LDE(DL) method in the thesis.
     # --Label_Distribution comes with --method_type "ML".

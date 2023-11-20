@@ -1,3 +1,6 @@
+'''
+Cache image features for test samples
+'''
 import argparse
 import sys
 import os

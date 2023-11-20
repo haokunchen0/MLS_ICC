@@ -71,5 +71,4 @@ Please cite our paper if it is helpful to your work:
 
 ## Acknowledgements
 
-Our implementations is built upon the source code from 
-[OpenFlamingo](https://github.com/mlfoundations/open_flamingo/tree/main).
+Our implementations is built upon the source code from [OpenFlamingo](https://github.com/mlfoundations/open_flamingo/tree/main).

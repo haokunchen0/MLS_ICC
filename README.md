@@ -32,7 +32,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Download the OpenFlamingo v2 3B model from this [link](https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b)
+Download the OpenFlamingo v2 3B model from this [link](https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b).
 
 You can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
 

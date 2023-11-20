@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.9-blue.svg?style=flat-square&logo=python&color=3776AB)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/pytorch-2.0.1-%237732a8?style=flat-square&logo=PyTorch&color=EE4C2C)](https://pytorch.org/)
 
-This repository includes the PyTorch implementation for our CVPR 2024 paper. If you have any questions, suggestions, or feedback related to this repository, please don't hesitate to [open an issue](https://github.com/haokunchen0/SL_ICL/issues).
+This repository includes the PyTorch implementation for our CVPR 2024 paper. 
 
 #### Summary
 
@@ -37,7 +37,7 @@ Download the OpenFlamingo v2 3B model from this [link](https://huggingface.co/op
 You can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
 
 ```bash
-python open_flamingo/eval/evaluate_test.py \
+python open_flamingo/eval/evaluate.py \
     --lm_path $LM_PATH \
     --lm_tokenizer_path $LM_TOKENIZER_PATH \
     --checkpoint_path $CKPT_PATH \

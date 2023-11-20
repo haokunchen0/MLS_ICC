@@ -5,7 +5,20 @@ import torch
 from utils import custom_collate_fn
 import random
 from open_clip import tokenizer
+from functools import partial
+from itertools import islice
+from typing import Sequence, Callable, Union
 
+def batched(iterable, n):
+    """Batch data into lists of length *n*. The last batch may be shorter.
+    NOTE based on more-itertools impl, to be replaced by python 3.12 itertools.batched impl
+    """
+    it = iter(iterable)
+    while True:
+        batch = list(islice(it, n))
+        if not batch:
+            break
+        yield batch
 '''
 RICES_Image aims to retrieve the similiar images for test image from the training_set.
 '''
@@ -117,7 +130,8 @@ class RICES_Text:
     def __init__(
         self,
         dataset,
-        text_label,
+        classnames: Sequence[str],
+        templates: Sequence[Union[Callable, str]],
         device,
         batch_size,
         vision_encoder_path="ViT-L-14",
@@ -126,7 +140,8 @@ class RICES_Text:
         label_distribution=False
     ):
         self.dataset = dataset
-        self.text_label = text_label
+        self.classnames = classnames
+        self.templates = templates
         self.device = device
         self.batch_size = batch_size
         self.label_distribution = label_distribution
@@ -140,7 +155,7 @@ class RICES_Text:
         self.tokenizer = open_clip.get_tokenizer(vision_encoder_path)
 
         # Tokenize the text descriptions and move to device
-        self.text_tokens = self.tokenizer(text_label).to(self.device)
+        # self.text_tokens = self.tokenizer(classnames).to(self.device)
         # self.text_tokens = tokenizer.tokenize(self.text_label).to(self.device)
         # Precompute features
         if cached_features is None:
@@ -150,13 +165,31 @@ class RICES_Text:
             self.text_features = cached_features
         
     def _precompute_text_features(self):
-        # Switch to evaluation mode
+        num_classes = len(self.classnames)
+        import tqdm
+        num_iter = 1 if self.batch_size is None else ((num_classes - 1) // self.batch_size + 1)
+        iter_wrap = partial(tqdm.tqdm, total=num_iter, unit_scale=self.batch_size)
+        
+        batched_embeds = [self._process_batch(batch) for batch in iter_wrap(batched(self.classnames, self.batch_size))]
+        zeroshot_weights = torch.cat(batched_embeds, dim=1)
+        
+        return zeroshot_weights.detach().cpu()
+    
+    def _process_batch(self, batch_classnames):
+        use_format = isinstance(self.templates[0], str)
+        num_templates = len(self.templates)
+        num_batch_classes = len(batch_classnames)
+        texts = [template.format(c) if use_format else template(c) for c in batch_classnames for template in self.templates]
+        texts = self.tokenizer(texts).to(self.device)
         self.model.eval()
-
         with torch.no_grad():
-            text_features = self.model.encode_text(self.text_tokens)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-        return text_features.detach().cpu()
+            class_embeddings = self.model.encode_text(texts, normalize=True)
+            class_embeddings = class_embeddings.reshape(num_batch_classes, num_templates, -1).mean(dim=1)
+            class_embeddings = class_embeddings / class_embeddings.norm(dim=1, keepdim=True)
+            class_embeddings = class_embeddings.T
+       
+        return class_embeddings
+
 
     def find(self, batch, num_examples):
         """
@@ -167,24 +200,35 @@ class RICES_Text:
 
         with torch.no_grad():
             # Preprocess and encode the image
-            image_input = torch.stack([self.image_processor(image) for image in batch]).to(
+            inputs = torch.stack([self.image_processor(image) for image in batch]).to(
                 self.device
             )
+            # batch = torch.Tensor(batch).to(device=self.device, dtype="fp32")
+            # output = self.model(image=batch)
+
             #Get the feature of the input image
-            query_feature = self.model.encode_image(image_input)
+            query_feature = self.model.encode_image(inputs)
             query_feature /= query_feature.norm(dim=-1, keepdim=True)
             query_feature = query_feature.detach().cpu()
             if query_feature.ndim == 1:
                 query_feature = query_feature.unsqueeze(0)
+
+            # image_features = inputs['image_features'] 
+            # image_features = image_features.detach().cpu()
+
             # Compute the similarity between image and text representations
-            similarities = (100.0 * query_feature @ self.text_features.T).softmax(dim=-1)
-            # if similarities.ndim == 1:
-            #     similarities = similarities.unsqueeze(0)
+            similarity = (query_feature @ self.text_features).squeeze()
+
+            if similarity.ndim == 1:
+                similarity = similarity.unsqueeze(0)
+
+            similarity_probs = torch.nn.functional.softmax(similarity, dim=-1)
+            # similarities = 100. * image_features @ self.text_features
             
             # Get the indices of the 'num_examples' most similar texts
-            indices = similarities.argsort(dim=-1, descending=True)[:, :num_examples]
+            indices = similarity_probs.argsort(dim=-1, descending=True)[:, :num_examples]
         # Return the most similar text descriptions
-        return [[self.text_label[i] for i in row] for row in indices], indices
+        return [[self.classnames[i] for i in row] for row in indices], indices
     
     
     def find_no_repeat(self, batch, true_labels, num_examples):

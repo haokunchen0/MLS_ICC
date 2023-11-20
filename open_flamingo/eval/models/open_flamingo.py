@@ -10,6 +10,7 @@ from open_flamingo.eval.utils import unwrap_model, get_autocast, get_cast_dtype
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
+    
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
 
@@ -157,6 +158,7 @@ class EvalModel(BaseEvalModel):
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
         all_class_names: List[str],
+        normalize_length: bool=True,
     ):
         """
         Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
@@ -183,21 +185,49 @@ class EvalModel(BaseEvalModel):
                 all_class_names
             )["input_ids"]
 
-        overall_probs = []
+        overall_log_probs = []
+        first_token_log_probs = []
         batch_size = outputs.scores[0].shape[0]
+        # overall_probs = []
+        # first_toke_probs = []
+        # for classname_tokens in classnames_tokens:
+        #     classname_tokens_num = len(classname_tokens)
+        #     prob = torch.ones(batch_size).to(self.device)
+        #     for i in range(classname_tokens_num):
+        #         try:
+        #             scores = torch.softmax(outputs.scores[i],dim=-1)
+        #             if i == 0:
+        #                 first_token_prob = scores[:, classname_tokens[i]]
+        #             prob *= scores[:, classname_tokens[i]]
+        #         except IndexError as e:
+        #             prob = torch.zeros(batch_size).to(self.device)
+        #     overall_probs.append(prob) # (B, 1)
+        #     first_token_probs.append(first_token_prob)
+        
+        # overall_probs = torch.vstack(overall_probs).T.cpu()  # shape (B, num_classes)
+        # first_token_probs = torch.vstack(first_token_probs).T.cpu()
+        # return overall_probs
         for classname_tokens in classnames_tokens:
             classname_tokens_num = len(classname_tokens)
-            prob = torch.ones(batch_size).to(self.device)
+            log_prob = torch.zeros(batch_size).to(self.device)
             for i in range(classname_tokens_num):
                 try:
-                    scores = torch.softmax(outputs.scores[i],dim=-1)
-                    prob *= scores[:, classname_tokens[i]]
+                    # Compute log probabilities instead of probabilities
+                    log_scores = torch.nn.functional.log_softmax(outputs.scores[i], dim=-1)
+                    if i == 0:
+                        first_token_log_prob = log_scores[:, classname_tokens[i]]
+                    # Sum the log probabilities instead of multiplying probabilities
+                    log_prob += log_scores[:, classname_tokens[i]]
                 except IndexError as e:
-                    prob = torch.zeros(batch_size).to(self.device)
-            overall_probs.append(prob) # (B, 1)
+                    log_prob = torch.full((batch_size,), -float('inf')).to(self.device)  # Use negative infinity to represent log(0)
+            if normalize_length:
+                log_prob /= classname_tokens_num
+            overall_log_probs.append(log_prob)  # (B, 1)
+            first_token_log_probs.append(first_token_log_prob)
 
-        overall_probs = torch.vstack(overall_probs).T.cpu()  # shape (B, num_classes)
-        return overall_probs
+        overall_log_probs = torch.vstack(overall_log_probs).T.cpu()  # shape (B, num_classes)
+        first_token_log_probs = torch.vstack(first_token_log_probs).T.cpu()
+        return overall_log_probs
 
     def __call__(
         self,
@@ -237,3 +267,9 @@ class EvalModel(BaseEvalModel):
 
     def get_imagenet_prompt(self, label=None) -> str:
         return f"<image>Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+    def get_imagenet_prompt_with_des(self, description, label=None) -> str:
+        return f"<image>has {description}Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+    def get_imagenet_prompt_with_des_new(self, description, label=None) -> str:
+        return f"<image>Output:{label if label is not None else ''}, which has {description}{'<|endofchunk|>' if label is not None else ''}"
+    def get_imagenet_prompt_with_des2(self, description, label=None) -> str:
+        return f"<image>Output:{label if label is not None else ''}, has {description}{'<|endofchunk|>' if label is not None else ''}"

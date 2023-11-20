@@ -54,6 +54,17 @@ python open_flamingo/eval/evaluate.py \
     --num_samples -1 \
     --results_file $RESULTS_FILE \
     --Label_Distribution \
+
+    # Optional parameters: 
+    # --method_type is the label enhancement method in our thesis.
+    # --description is the visual enhancement method in our thesis.
+    # --ensemble is a combination of the two.
+    # --OP is the LDE(DL) method in the thesis.
+    # --Label_Distribution comes with --method_type "ML".
+    # --rices_type is the way to retrieve ICE, add it and it will use RICES method.
+    # --cached_demonstration_features is pre-computed features of image or text.
+    # --shots, shots of ICE examples.
+    # The above running code is using the LDE(DD) method under the RICES method
 ```
 
 
@@ -67,7 +78,7 @@ Please cite our paper if it is helpful to your work:
 
 
 ## TODO
-
+Working on it...
 
 ## Acknowledgements
 

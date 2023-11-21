@@ -1,13 +1,10 @@
 import open_clip
 import torch
-from tqdm import tqdm
-import torch.nn.functional as F
-from utils import custom_collate_fn, rough_descriptions
-import random
 from typing import Sequence, Callable, Union
 
 
 class Enhancement:
+    """Class to perform Label distribution Enhancement"""
     def __init__(
         self,
         dataset,
@@ -19,7 +16,6 @@ class Enhancement:
         vision_encoder_pretrained="openai",
         cached_features=None,
         label_distribution=False,
-        rough_desc=False,
         only_probability=False,
     ):
         self.dataset = dataset
@@ -28,7 +24,6 @@ class Enhancement:
         self.device = device
         self.batch_size = batch_size
         self.label_distribution = label_distribution
-        self.rough_desc = rough_desc
         self.only_probability = only_probability
         
         # Load the model and tokenizer
@@ -93,27 +88,13 @@ class Enhancement:
                 final_indices_with_true_label.append(similar_indices_with_true_label)
 
         if self.label_distribution:
+
             combined_texts = []
             for label_row, prob_row in zip(final_indices, final_probs):
                 combined = [f" but may have { prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
                 combined_texts.append(combined)
             return combined_texts
-        elif self.rough_desc:
-            # Select prompt template 
-            combined_texts = []
-            for _, label_row in enumerate(final_indices):
-                combined = [f" but may be {self.text_label[i]}" for i in label_row]
-                combined_texts.append(combined)
-            return combined_texts
-            # prompt_text_template = rough_descriptions[num_examples]
 
-            # combined_texts = []
-            # for _, label_row in enumerate(final_indices_with_true_label):
-            #     text_labels = [self.text_label[i] for i in label_row]
-            #     # Fill in the blanks 
-            #     combined = prompt_text_template.format(*text_labels)
-            #     combined_texts.append(combined)
-            # return combined_texts
         else:
             similar_texts = [[self.text_label[i] for i in row] for row in final_indices]
             return similar_texts
@@ -122,24 +103,23 @@ class Enhancement:
         """
         Given specific labels, find the similiar ones.
         """
-        # 切换到评估模式
         self.model.eval()
 
         with torch.no_grad():
-            # 对查询文本进行分词并移至设备
+            # Tokenize the query text 
             query_tokens = self.tokenizer(query_texts).to(self.device)
             query_features = self.model.encode_text(query_tokens)
             query_features /= query_features.norm(dim=-1, keepdim=True)
             query_features = query_features.detach().cpu()
 
-            # 计算查询文本和所有标签之间的相似性
+            # Compute similarity
             similarities = (query_features @ self.text_features.T).squeeze()
             if len(similarities.shape) == 1:  # 处理单个查询文本的情况
                 similarities = similarities.unsqueeze(0)
-            # 获取最相似的标签的索引
+            # Get the index of top-1 similarity
             sorted_indices = similarities.argsort(dim=-1, descending=True)
             
-        # 确保返回的标签与查询文本不同
+
         final_labels = []
         for idx, query_text in enumerate(query_texts):
             # Get indices of the top 'num_similar' similar labels excluding the true label
@@ -204,10 +184,13 @@ class Enhancement:
                 
                 final_probs.append(top_similarities)
                 final_indices.append(top_similar_indices)
+
         if  return_index:
             return final_indices
+        
         else:
             if self.label_distribution:
+
                 combined_texts = []
                 for label_row, prob_row in zip(final_indices, final_probs):
                     if self.only_probability:
@@ -216,17 +199,7 @@ class Enhancement:
                         combined = [f" but may have { prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
                     combined_texts.append(combined)
                 return combined_texts
-            elif self.rough_desc:
-                # Select prompt template 
-                prompt_text_template = rough_descriptions[num_examples]
-
-                combined_texts = []
-                for _, label_row in enumerate(final_indices_with_true_label):
-                    text_labels = [self.text_label[i] for i in label_row]
-                    # Fill in the blanks 
-                    combined = prompt_text_template.format(*text_labels)
-                    combined_texts.append(combined)
-                return combined_texts
+           
             else:
                 similar_texts = [[self.text_label[i] for i in row] for row in final_indices]
                 return similar_texts
@@ -272,9 +245,7 @@ class Enhancement:
                 else:
                     combined = [f" but may have {prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(top_similar_indices, percentages)]
                 final_labels.append(combined)
-            elif self.rough_desc:
-                combined = [f" but may be a {self.text_label[idx]}" for _, idx in enumerate(top_similar_indices)]
-                final_labels.append(combined)
+           
             else:
                 final_labels.append([self.text_label[i] for i in top_similar_indices])
 
@@ -282,6 +253,8 @@ class Enhancement:
     
     
 class VisualDescriptionEnhancement:
+    """Class to perform Visual Description Enhancement"""
+
     def __init__(
         self,
         dataset,

@@ -2,7 +2,6 @@ import argparse
 import importlib
 import json
 import os
-import uuid
 import random
 from collections import defaultdict
 
@@ -10,7 +9,6 @@ import numpy as np
 import torch
 import utils
 import math
-import pickle
 
 from rices import RICES_Image, RICES_Text
 from enhancement import Enhancement
@@ -62,7 +60,6 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-#parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--batch_size_map", type=str, default="0:10,1:20,2:8,4:6,8:4,16:2")
 
 parser.add_argument(
@@ -136,16 +133,7 @@ parser.add_argument(
     "--calibrate",
     action="store_true"
 )
-# parser.add_argument(
-#     "--text_to_text",
-#     action="store_true",
-#     help="Whether to use true labels to find labels."
-# )
-# parser.add_argument(
-#     "--multilabel",
-#     action="store_true",
-#     help="Whether to use multi-label for evaluation."
-# )
+
 # Dataset arguments
 parser.add_argument("--dataset_name", type=str, default="imagenet")
 parser.add_argument("--dataset_root", type=str, default="/tmp")
@@ -207,26 +195,17 @@ def main():
 
     print(f"Evaluating on {args.dataset_name} Dataset...")
 
-    assert args.rices_type in ["image", "text", "both", None]
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
-        if args.rices_type == "both":
-            cached_features = [None, None]
-            cached_features[0] = torch.load(
-                f"{args.cached_demonstration_features}/image_{args.dataset_name}.pkl", map_location="cpu"
-            )
-            cached_features[1] = torch.load(
-                f"{args.cached_demonstration_features}/text_{args.dataset_name}.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
-            )
+        
+        cached_features = torch.load(
+            f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
+        )
     else:
         cached_features = None
     if args.method_type != "normal":
         label_cached_features = torch.load(
-                f"/data/zihan/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
+                f"/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
             )
     else:
         label_cached_features = None    
@@ -340,52 +319,6 @@ def evaluate_classification(
         all_class_names = STANFORD_DOG_CLASSNAMES
         description = STANFORD_DOG_DESCRIPTION
         k = 5
-    elif dataset_name == "food101":
-        train_dataset = Food101Dataset(
-            root=args.dataset_root
-        )
-        test_dataset = Food101Dataset(
-            root=args.dataset_root,
-            train=False
-        )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
-        all_class_names = FOOD101_NAMES
-        k = 5
-    elif dataset_name == "flowers102":
-        train_dataset = Flowers102Dataset(
-            root=args.dataset_root
-        )
-        test_dataset = Flowers102Dataset(
-            root=args.dataset_root,
-            train=False
-        )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
-        all_class_names = FLOWERS102_NMAES
-        k = 5
-    elif dataset_name == "oxford_pet":
-        train_dataset = OxfordPetDataset(
-            root=args.dataset_root
-        )
-        test_dataset = OxfordPetDataset(
-            root=args.dataset_root,
-            train=False
-        )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
-        all_class_names = PETS_NAMES
-        k = 5
-    elif dataset_name == "dtd":
-        train_dataset = DTDDataset(
-            root=args.dataset_root
-        )
-        test_dataset = DTDDataset(
-            root=args.dataset_root,
-            train=False
-        )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
-        all_class_names = DTD_NAMES
-        description = STANFORD_DOG_DESCRIPTION
-
-        k = 5
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
     templates = OPENAI_IMAGENET_TEMPLATES 
@@ -400,11 +333,6 @@ def evaluate_classification(
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
     )
-    if args.calibrate:
-        print("Calibration is activated..")
-        with open(f"/home/hyh30/SL_ICL/open_flamingo/eval/logits/{args.dataset_name}_bias.pkl",'rb') as f:
-            bias = pickle.load(f)
-        p_cf_tensor = bias['logprobs']
     if args.OP:
         print("Only Probability")
     # Choose rices types
@@ -435,13 +363,11 @@ def evaluate_classification(
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
         
     # Enhancement methods.
-    if args.method_type == "ML" or args.method_type == "T2T" or args.Label_Distribution:
-        if args.Label_Distribution:
-            print("LD is activated...")
-        if args.method_type == "ML":
-            print("multilabel has been activated...")
-        if args.method_type == "T2T":
-            print("Label find similiar labels has been activated...")
+    if args.Label_Distribution:
+        print("LD is activated...")
+    if args.method_type == "ML":
+        print("multilabel has been activated...")
+
         enhancement = Enhancement(
             train_dataset,
             labels,
@@ -454,22 +380,9 @@ def evaluate_classification(
             label_distribution=args.Label_Distribution,
             only_probability=args.OP,
         )
-    if (args.method_type == "T2T" or args.method_type == "ML") and args.rough_desc and not args.Label_Distribution:
-        enhancement1 = Enhancement(
-            train_dataset,
-            labels,
-            templates,
-            eval_model.device,
-            batch_size,
-            cached_features=label_cached_features,
-            vision_encoder_path=args.rices_vision_encoder_path,
-            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
-            rough_desc=args.rough_desc,
-            only_probability=args.OP,
-        )
         
     utils.random_seed(seed, args.rank)
-    predictions, logits = [], []
+    predictions = []
     cnt=0
     for _, batch in tqdm(
         enumerate(test_dataloader),
@@ -503,6 +416,7 @@ def evaluate_classification(
                 else:
                     context_images = []
                 batch_images.append(context_images + [batch["image"][i]])
+                
                 if args.method_type == "normal" or args.ensemble:
                     if args.description:
                         context_text = "".join([eval_model.get_imagenet_prompt_with_des(description[x["class_id"]], label=x["class_name"]) for x in batch_demo_samples[i]])
@@ -526,9 +440,6 @@ def evaluate_classification(
                     
                     # Find similar tags using these real tags
                     shots_labels_for_current_batch = enhancement.find_similar_labelswithSimilarity(true_labels_for_current_batch, 1)
-                    if args.rough_desc:
-                        shots_labels_for_current_batch = enhancement1.find_similar_labelswithSimilarity(true_labels_for_current_batch, 1)
-
                     # Connect the tags (real tags + similar tags) for each image
                     if args.Label_Distribution:
                         labels_for_each_image = [",".join([true_label] + similar_labels) 
@@ -551,18 +462,13 @@ def evaluate_classification(
                 if args.method_type == "ML":
                     true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
                     true_labels_des_for_cbatch = [description[x['class_id']] for x in batch_demo_samples[i]]
-                    # if not args.rough_desc:
 
-                        # Get the similarity tags of all images in the current batch
                     similar_labels_for_batch = enhancement.MultilabelwithSimilarity([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1)
-                    if args.pseudo_des:
-                        pseudo_indices = enhancement.MultilabelwithSimilarity([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1, return_index=True)
-                        true_labels_des_for_cbatch = [description[x[0].item()] for x in pseudo_indices]
 
                     # Combine real tags with similar tags
                     combined_labels_for_batch = []
                     for true_label, similar_labels in zip(true_labels_for_current_batch, similar_labels_for_batch):
-                        # if args.Label_Distribution: 
+
                         combined_labels = [true_label] + similar_labels
                         combined_labels_for_batch.append(combined_labels)
                     # Connect the tags of each image
@@ -570,13 +476,7 @@ def evaluate_classification(
 
                         # Use the prompt_fn function to generate a prompt for each image.
                     prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
-                    # else:
-                    #     similar_labels_for_batch = enhancement1.Multilabel([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1)
-                    #     combined_labels_for_batch = []
-                    #     for true_label, similar_labels in zip(true_labels_for_current_batch, similar_labels_for_batch):
-                    #         combined_labels = [true_label] + similar_labels
-                    #         combined_labels_for_batch.append(combined_labels)
-                    #     labels_for_each_image = [",".join(labels) for labels in combined_labels_for_batch]
+
                     if args.description:
                         # prompts_for_each_image = [eval_model.get_imagenet_prompt_with_des_new(description, labels) for description,labels in zip(true_labels_des_for_cbatch, labels_for_each_image)]
                         prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
@@ -624,21 +524,12 @@ def evaluate_classification(
 
         # ensemble logprobs together
         logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
-        if args.description:
-            # W = torch.diag(1.0 / (-p_cf_tensor))
-            # logprobs = torch.matmul(logprobs, W)
-            # Simply minus
-            # b = -p_cf_tensor
-            # logprobs = logprobs + b.unsqueeze(0)
-            logits.append(logprobs)
-            # print(logits, len(logits))
             
         predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
             logprobs,
             k,
             class_id_to_name,
         )
-
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
             y_i = batch["class_name"][i]
@@ -654,7 +545,6 @@ def evaluate_classification(
                     "pred_score": score,
                 }
             )
-    
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
@@ -665,26 +555,7 @@ def evaluate_classification(
     all_predictions = [
         item for sublist in all_predictions for item in sublist
     ]  # flatten
-    if args.description:
-        logits = torch.cat(logits, dim=0)
-        infos = {
-            "logits": logits,
-            "predictions": all_predictions
-            }
-        pass
-        # dump as pkl
-        # with open(f"/home/hyh30/SL_ICL/open_flamingo/eval/logits/image-full_logits_{args.method_type}_des_{num_shots}.pkl", "wb") as f:
-        #     pickle.dump(infos, f)
-    # if args.calibrate:
-    #     logits = torch.cat(logits, dim=0)
-    #     print(logits.shape)
-    #     infos = {
-    #         "logits": logits,
-    #         "predictions": all_predictions
-    #         }
-    #     # dump as pkl
-    #     with open(f"/home/hyh30/SL_ICL/open_flamingo/eval/logits/{dataset_name}_logits_{args.method_type}_nb_{num_shots}.pkl", "wb") as f:
-    #         pickle.dump(infos, f)
+
     # return top-1 accuracy
     acc1 = sum(
         int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions

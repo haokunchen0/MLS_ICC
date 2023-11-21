@@ -75,17 +75,12 @@ parser.add_argument(
 parser.add_argument(
     "--method_type",
     default="normal",
-    help="ML or T2T"
+    help="ML or None"
 )
 parser.add_argument(
     "--Label_Distribution",
     action="store_true",
     help="Whether to use LD to add probability for labels.",
-)
-parser.add_argument(
-    "--pseudo_des",
-    action="store_true",
-    help="Whether to describe pseudo label.",
 )
 parser.add_argument(
     "--ensemble",
@@ -114,11 +109,7 @@ parser.add_argument(
     default=None,
     help="for ML image to label..."
 )
-parser.add_argument(
-    "--rough_desc",
-    action="store_true",
-    help='Whether to roughly describe the multi-label candidates.'
-)
+
 parser.add_argument(
     "--description",
     action="store_true",
@@ -128,10 +119,6 @@ parser.add_argument(
     "--OP",
     action="store_true",
     help="Only Probability"
-)
-parser.add_argument(
-    "--calibrate",
-    action="store_true"
 )
 
 # Dataset arguments
@@ -201,14 +188,17 @@ def main():
         cached_features = torch.load(
             f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
         )
+
     else:
         cached_features = None
+
     if args.method_type != "normal":
         label_cached_features = torch.load(
                 f"/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
             )
     else:
         label_cached_features = None    
+        
     for shot in args.shots:
         results = {f"{args.dataset_name}": []}
         batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])

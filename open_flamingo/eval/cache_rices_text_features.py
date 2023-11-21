@@ -57,7 +57,7 @@ def main():
     )
     torch.save(
         rices_dataset.text_features,
-        os.path.join(args.output_dir, "text_cub200_new.pkl"),
+        os.path.join(args.output_dir, "text_cub200.pkl"),
     )
 
 

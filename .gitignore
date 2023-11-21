@@ -8,3 +8,4 @@ bash_run
 get*
 *-*
 *test*
+open_flamingo/eval/logits/*

@@ -138,10 +138,10 @@ def main():
 
     print(f"Evaluating on {args.dataset_name} Dataset...")
 
-    assert args.rices_type in ["image", "text", "ETD", None]
+    assert args.method_type in ["ML", "ETD", None]
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
-        if args.rices_type == "ETD":
+        if args.method_type == "ETD":
             cached_features = torch.load(
                 f"{args.cached_demonstration_features}/image_{args.dataset_name}.pkl", map_location="cpu"
             )
@@ -219,7 +219,7 @@ def generate_description(
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
     labels = all_class_names
-    if args.rices_type == "ETD":
+    if args.method_type == "ETD":
         print("description has been activated...")
         rices_etd = VisualDescriptionEnhancement(
             train_dataset,

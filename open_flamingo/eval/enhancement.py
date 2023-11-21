@@ -3,7 +3,7 @@ import torch
 from typing import Sequence, Callable, Union
 
 
-class Enhancement:
+class LabelDistributionEnhancement:
     """Class to perform Label distribution Enhancement"""
     def __init__(
         self,
@@ -99,53 +99,53 @@ class Enhancement:
             similar_texts = [[self.text_label[i] for i in row] for row in final_indices]
             return similar_texts
         
-    def find_similar_labels(self, query_texts, num_similar=1):
-        """
-        Given specific labels, find the similiar ones.
-        """
-        self.model.eval()
+    # def find_similar_labels(self, query_texts, num_similar=1):
+    #     """
+    #     Given specific labels, find the similiar ones.
+    #     """
+    #     self.model.eval()
 
-        with torch.no_grad():
-            # Tokenize the query text 
-            query_tokens = self.tokenizer(query_texts).to(self.device)
-            query_features = self.model.encode_text(query_tokens)
-            query_features /= query_features.norm(dim=-1, keepdim=True)
-            query_features = query_features.detach().cpu()
+    #     with torch.no_grad():
+    #         # Tokenize the query text 
+    #         query_tokens = self.tokenizer(query_texts).to(self.device)
+    #         query_features = self.model.encode_text(query_tokens)
+    #         query_features /= query_features.norm(dim=-1, keepdim=True)
+    #         query_features = query_features.detach().cpu()
 
-            # Compute similarity
-            similarities = (query_features @ self.text_features.T).squeeze()
-            if len(similarities.shape) == 1:  # 处理单个查询文本的情况
-                similarities = similarities.unsqueeze(0)
-            # Get the index of top-1 similarity
-            sorted_indices = similarities.argsort(dim=-1, descending=True)
+    #         # Compute similarity
+    #         similarities = (query_features @ self.text_features.T).squeeze()
+    #         if len(similarities.shape) == 1:  # 处理单个查询文本的情况
+    #             similarities = similarities.unsqueeze(0)
+    #         # Get the index of top-1 similarity
+    #         sorted_indices = similarities.argsort(dim=-1, descending=True)
             
 
-        final_labels = []
-        for idx, query_text in enumerate(query_texts):
-            # Get indices of the top 'num_similar' similar labels excluding the true label
-            top_similar_indices = [i for i in sorted_indices[idx] if self.text_label[i] != query_text][:num_similar]
+    #     final_labels = []
+    #     for idx, query_text in enumerate(query_texts):
+    #         # Get indices of the top 'num_similar' similar labels excluding the true label
+    #         top_similar_indices = [i for i in sorted_indices[idx] if self.text_label[i] != query_text][:num_similar]
 
-            # Include the index of the true label
-            true_label_index = self.text_label.index(query_text)
-            similar_indices_with_true_label = [true_label_index] + top_similar_indices
+    #         # Include the index of the true label
+    #         true_label_index = self.text_label.index(query_text)
+    #         similar_indices_with_true_label = [true_label_index] + top_similar_indices
 
-            # Extract the original similarity values for these indices
-            combined_similarities = similarities[idx, similar_indices_with_true_label]
+    #         # Extract the original similarity values for these indices
+    #         combined_similarities = similarities[idx, similar_indices_with_true_label]
                 
-            # Normalize the combined similarities to get the percentages
-            percentages_with_true_label = combined_similarities / combined_similarities.sum()
+    #         # Normalize the combined similarities to get the percentages
+    #         percentages_with_true_label = combined_similarities / combined_similarities.sum()
                 
-            # Exclude the true label's percentage
-            percentages = percentages_with_true_label[1:]
+    #         # Exclude the true label's percentage
+    #         percentages = percentages_with_true_label[1:]
                 
-            if self.label_distribution:
-                # Combine label with probability
-                combined = [f" but may have {prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(top_similar_indices, percentages)]
-                final_labels.append(combined)
-            else:
-                final_labels.append([self.text_label[i] for i in top_similar_indices])
+    #         if self.label_distribution:
+    #             # Combine label with probability
+    #             combined = [f" but may have {prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(top_similar_indices, percentages)]
+    #             final_labels.append(combined)
+    #         else:
+    #             final_labels.append([self.text_label[i] for i in top_similar_indices])
 
-        return final_labels
+    #     return final_labels
     
     def MultilabelwithSimilarity(self, batch, true_labels, num_examples, return_index=False):
         """

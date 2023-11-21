@@ -39,6 +39,18 @@ Before starting the evaluation, make sure to cache both the image features (plea
 Then, you can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
 
 ```bash
+export CUDA_VISIBLE_DEVICES=1
+export MASTER_ADDR='localhost'
+export MASTER_PORT=$(shuf -i 0-65535 -n 1)
+export PYTHONPATH="$PYTHONPATH:open_flamingo"
+
+LM_PATH="" # llama model path 
+LM_TOKENIZER_PATH="" # llama model path
+CKPT_PATH=""
+VISION_ENCODER="ViT-L-14"
+VISION_ENCODER_PRETRAINED='openai'
+CACHED_PATH=""
+
 python open_flamingo/eval/evaluate.py \
     --lm_path $LM_PATH \
     --lm_tokenizer_path $LM_TOKENIZER_PATH \
@@ -68,7 +80,33 @@ python open_flamingo/eval/evaluate.py \
     # --shots, shots of ICE examples.
     # The above running code is using the LDE(DD) method under the RICES method
 ```
+If you want to generate visual description, please use the following command and change the prompt for discription in 'openflamingo/eval/models/open_flamingo.py' for your own custom discriptive prompt.
 
+```bash
+DATA_NAME=""
+DATA_PATH=""
+RESULTS_FILE="results/{$DATA_NAME}_description.txt"
+
+python open_flamingo/eval/description.py \
+    --lm_path $LM_PATH \
+    --lm_tokenizer_path $LM_TOKENIZER_PATH \
+    --checkpoint_path $CKPT_PATH \
+    --dataset_name $DATA_NAME \
+    --vision_encoder_path $VISION_ENCODER \
+    --vision_encoder_pretrained $VISION_ENCODER_PRETRAINED \
+    --precision amp_bf16 \
+    --dataset_root $DATA_PATH  \
+    --num_samples -1 \
+    --results_file $RESULTS_FILE \
+    --batch_size 20 \
+    --method_type "ETD" \
+    --cross_attn_every_n_layers 1 \
+    --cached_demonstration_features $CACHED_PATH \
+```
+If you want to get the text or image features from dataset, use command:
+```bash
+python open_flamingo/eval/cache_rices_xxx_features.py --dataset_root xxx --output_dir xxx --batch_size xxx 
+```
 
 ## Datasets
 [ImageNet](https://www.image-net.org/download.php),  [CUB-200](http://www.vision.caltech.edu/datasets/cub_200_2011/), [Stanford Dogs](http://vision.stanford.edu/aditya86/ImageNetDogs/) and  [Stanford Cars](https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset) are chosen for evaluation.

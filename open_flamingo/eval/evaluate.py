@@ -11,7 +11,7 @@ import utils
 import math
 
 from rices import RICES_Image, RICES_Text
-from enhancement import Enhancement
+from enhancement import LabelDistributionEnhancement
 from tqdm import tqdm
 from eval_model import BaseEvalModel
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
@@ -75,7 +75,7 @@ parser.add_argument(
 parser.add_argument(
     "--method_type",
     default="normal",
-    help="ML or None"
+    help="Label Distribution Enhancement."
 )
 parser.add_argument(
     "--Label_Distribution",
@@ -107,18 +107,18 @@ parser.add_argument(
 parser.add_argument(
     "--label_cached_demonstration_features",
     default=None,
-    help="for ML image to label..."
+    help="for LDE image to label..."
 )
 
 parser.add_argument(
     "--description",
     action="store_true",
-    help="Whether use description."
+    help="Whether use Visual Description Enhancement."
 )
 parser.add_argument(
     "--OP",
     action="store_true",
-    help="Only Probability"
+    help="Only Probability which is LDE(DL)"
 )
 
 # Dataset arguments
@@ -324,7 +324,7 @@ def evaluate_classification(
         batch_size,
     )
     if args.OP:
-        print("Only Probability")
+        print("Only Probability...")
     # Choose rices types
     if args.rices_type == "image":
         print("rices has been activated...")
@@ -336,29 +336,17 @@ def evaluate_classification(
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
-    elif args.rices_type == "text":
-        print("rices_text has been activated...")
-        rices_text = RICES_Text(
-            train_dataset,
-            labels,
-            eval_model.device,
-            batch_size,
-            cached_features=cached_features,
-            vision_encoder_path=args.rices_vision_encoder_path,
-            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
-            label_distribution=args.Label_Distribution,
-        )
     else:
         # subset of the training set to sample context images from
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
         
     # Enhancement methods.
     if args.Label_Distribution:
-        print("LD is activated...")
+        print("Label Distribution is activated...")
     if args.method_type == "ML":
-        print("multilabel has been activated...")
+        print("Label_Distribution_Enhancement is activated...")
 
-        enhancement = Enhancement(
+        enhancement = LabelDistributionEnhancement(
             train_dataset,
             labels,
             templates,
@@ -382,9 +370,6 @@ def evaluate_classification(
         
         if args.rices_type == "image":
             batch_demo_samples = rices_image_dataset.find(batch["image"], effective_num_shots)
-        elif args.rices_type == "text":
-            batch_demo_labels = rices_text.find(batch["image"], 1)
-            batch_demo_samples = rices_text.get_images_from_labels(batch_demo_labels, effective_num_shots)
         else:
             batch_demo_samples = utils.sample_batch_demos_from_query_set(
                 query_set, effective_num_shots, len(batch["image"])

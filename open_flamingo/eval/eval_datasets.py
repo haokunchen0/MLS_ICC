@@ -1,13 +1,14 @@
 from torchvision.datasets import ImageFolder
 from torch.utils.data import Dataset
-from classification_utils import IMAGENET_CLASSNAMES, STANFORD_DOG_CLASSNAMES, STANFORD_CAR_CLASSNAMES, CUB_CLASSNAMES
+
+from classification_utils import *
 
 import os
 import scipy.io
 from PIL import Image
 
 class ImageNetDataset(ImageFolder):
-    """Class to represent the ImageNet1k dataset."""
+    """Class to represent the ImageNet dataset."""
 
     def __init__(self, root, **kwargs):
         super().__init__(root=root, **kwargs)
@@ -26,7 +27,7 @@ class ImageNetDataset(ImageFolder):
         }
     
 class CUB200Dataset(Dataset):
-    """Class to represent the CUB dataset."""
+    """Class to represent the CUB-200 dataset."""
 
     def __init__(self, root, transform=None, train=True):
         self.root = root
@@ -76,7 +77,7 @@ class CUB200Dataset(Dataset):
         image_names = []
         with open(os.path.join(self.root, 'images.txt'), 'r') as f:
             for line in f:
-                image_id, image_name = line.strip().split()
+                _, image_name = line.strip().split()
                 image_names.append(image_name)
         return image_names
     
@@ -84,7 +85,7 @@ class CUB200Dataset(Dataset):
         return len(self.image_paths)
 
 class StanfordCarDataset(ImageFolder):
-    """Class to represent the Stanford Car dataset."""
+    """Class to represent the Stanford Cars dataset."""
 
     def __init__(self, root, **kwargs):
         super().__init__(root=root, **kwargs)
@@ -103,7 +104,7 @@ class StanfordCarDataset(ImageFolder):
         }
     
 class StanfordDogDataset(Dataset):
-    """Class to represent the Stanford Dog dataset."""
+    """Class to represent the Stanford Dogs dataset."""
 
     def __init__(self, root, transform=None, train=True):
         self.root = root
@@ -145,4 +146,4 @@ class StanfordDogDataset(Dataset):
             "class_id": class_id,
             "class_name": target_label,
         }
-        
+    

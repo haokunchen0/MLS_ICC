@@ -1,4 +1,3 @@
-# classnames via https://github.com/mlfoundations/wise-ft/blob/master/src/datasets/imagenet_classnames.py#L1
 IMAGENET_CLASSNAMES = [
     "tench",
     "goldfish",

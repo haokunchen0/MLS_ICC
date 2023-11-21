@@ -2,16 +2,14 @@ import argparse
 import importlib
 import json
 import os
-import uuid
-import random
+
 from collections import defaultdict
 
 import numpy as np
 import torch
 import utils
-import math
 
-from rices import RICES_Image, RICES_Text
+from rices import RICES_Text
 from tqdm import tqdm
 from eval_model import BaseEvalModel
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
@@ -22,7 +20,7 @@ from eval_datasets import (
     StanfordCarDataset, 
     StanfordDogDataset,
 )
-
+from templates import *
 from classification_utils import (
     IMAGENET_CLASSNAMES,
     CUB_CLASSNAMES,
@@ -163,7 +161,7 @@ def main():
     if args.cached_demonstration_features is not None:
         if args.rices_type == "text":
             cached_features = torch.load(
-                f"{args.cached_demonstration_features}/text_{args.dataset_name}prefix.pkl", map_location="cpu"
+                f"{args.cached_demonstration_features}/text_{args.dataset_name}_new.pkl", map_location="cpu"
             )
     else:
         cached_features = None
@@ -173,7 +171,7 @@ def main():
         print(f"Now evaluating on {batch_size} samples...")
         scores = []
         for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            imagenet_score = evaluate_classification(
+            imagenet_score = evaluate_clip(
                 args,
                 eval_model=eval_model,
                 num_shots=shot,
@@ -205,7 +203,7 @@ def main():
             json.dump(results, f)
 
 
-def evaluate_classification(
+def evaluate_clip(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
     batch_size: int,
@@ -235,9 +233,7 @@ def evaluate_classification(
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.dataset_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.dataset_root, "val"))
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = IMAGENET_CLASSNAMES
-        k = 5
     elif dataset_name == "cub200":
         train_dataset = CUB200Dataset(
             root=args.dataset_root
@@ -246,9 +242,7 @@ def evaluate_classification(
             root=args.dataset_root,
             train=False
         )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = CUB_CLASSNAMES
-        k = 5
     elif dataset_name == "stanford_car":
         train_dataset = StanfordCarDataset(
             root=(os.path.join(args.dataset_root, "train"))
@@ -256,9 +250,7 @@ def evaluate_classification(
         test_dataset = StanfordCarDataset(
             root=(os.path.join(args.dataset_root, "test"))
         )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = STANFORD_CAR_CLASSNAMES
-        k = 5
     elif dataset_name == "stanford_dog":
         train_dataset = StanfordDogDataset(
             root=args.dataset_root
@@ -267,16 +259,9 @@ def evaluate_classification(
             root=args.dataset_root,
             train=False
         )
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = STANFORD_DOG_CLASSNAMES
-        k = 5
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
-
-    labels = ["A photo of a " + label for label in all_class_names]
-    class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
-
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
@@ -284,12 +269,13 @@ def evaluate_classification(
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
     )
-
+    templates = OPENAI_IMAGENET_TEMPLATES 
     if args.rices_type == "text":
         print("rices_text has been activated...")
         rices_text_labels = RICES_Text(
             train_dataset,
-            labels,
+            all_class_names,
+            templates,
             eval_model.device,
             batch_size,
             cached_features=cached_features,
@@ -301,21 +287,18 @@ def evaluate_classification(
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
     utils.random_seed(seed, args.rank)
-    results = []
-    print(len(test_dataloader))
+    results = np.array([])
+    # print(len(test_dataloader))
     sum_correct = 0
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader),total=len(test_dataloader)
-    ):
-       
-
+    ):       
         _,indices = rices_text_labels.find(batch["image"], 1)
 
-        # class_names = np.array(batch['class_name'])
         class_ids = np.array(batch['class_id'])
         pred_labels = np.array(indices)[:, 0]
+        results = np.concatenate((results, pred_labels))
         correct = (class_ids == pred_labels).sum()
-        print(correct)
         sum_correct += correct
 
     return sum_correct / len(test_dataset)

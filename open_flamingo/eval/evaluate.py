@@ -434,31 +434,7 @@ def evaluate_classification(
                         context_text
                         + prompt_fn({"class_name": None})
                     )
-                elif args.method_type == "T2T":
-                    # Get the real tags of all images in the current batch as a query
-                    true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
-                    
-                    # Find similar tags using these real tags
-                    shots_labels_for_current_batch = enhancement.find_similar_labelswithSimilarity(true_labels_for_current_batch, 1)
-                    # Connect the tags (real tags + similar tags) for each image
-                    if args.Label_Distribution:
-                        labels_for_each_image = [",".join([true_label] + similar_labels) 
-                                                for true_label, similar_labels in zip(true_labels_for_current_batch, shots_labels_for_current_batch)]
-                    else:
-                        labels_for_each_image = [",".join([true_label] + similar_labels) 
-                                                for true_label, similar_labels in zip(true_labels_for_current_batch, shots_labels_for_current_batch)]
-                    # Use the prompt_fn function to generate a prompt for each image.
-                    prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
 
-                    # Link the prompts of all the images
-                    context_text = "".join(prompts_for_each_image)
-                    if num_shots == 0:
-                        context_text = context_text.replace("<image>", "")
-                        # Keep the text but remove the image tags for the zero-shot case
-                    batch_text.append(
-                        context_text
-                        + prompt_fn({"class_name": None})
-                    )
                 if args.method_type == "ML":
                     true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
                     true_labels_des_for_cbatch = [description[x['class_id']] for x in batch_demo_samples[i]]

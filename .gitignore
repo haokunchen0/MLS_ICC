@@ -4,4 +4,6 @@ results
 *.ipynb
 *.json
 *.txt
-bash_run-hyh
+bash_run
+get*
+*-*

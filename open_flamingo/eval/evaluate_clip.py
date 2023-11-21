@@ -36,12 +36,7 @@ parser.add_argument(
     help="Model name. Currently only `OpenFlamingo` is supported.",
     default="open_flamingo",
 )
-parser.add_argument(
-    "--results_file", type=str, default=None, help="JSON file to save results"
-)
 
-# Trial arguments
-parser.add_argument("--shots", nargs="+", default=[0, 4, 8, 16, 32], type=int)
 parser.add_argument(
     "--num_trials",
     type=int,
@@ -65,19 +60,8 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-#parser.add_argument("--batch_size", type=int, default=8)
-parser.add_argument("--batch_size_map", type=str, default="0:50")
+parser.add_argument("--batch_size", type=int, default=50)
 
-parser.add_argument(
-    "--classification_prompt_ensembling",
-    action="store_true",
-    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)",
-)
-parser.add_argument(
-    "--rices_type",
-    default=None,
-    help="Type to use RICES for evaluation, image or text. If none, uses random demonstrations.",
-)
 parser.add_argument(
     "--rices_vision_encoder_path",
     default="ViT-L-14",
@@ -123,18 +107,10 @@ parser.add_argument(
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
 
-def parse_batch_size_map(batch_size_map_str):
-    mapping = {}
-    pairs = batch_size_map_str.split(',')
-    for pair in pairs:
-        shot, batch_size = pair.split(':')
-        mapping[int(shot)] = int(batch_size)
-    return mapping
 
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
-    args.batch_size_map = parse_batch_size_map(args.batch_size_map)
 
     model_args = {
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
@@ -147,68 +123,46 @@ def main():
     eval_model.set_device(device_id)
     eval_model.init_distributed()
 
-    if args.model != "open_flamingo" and args.shots != [0]:
-        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
-
-    results = defaultdict(list)
 
     print(f"Evaluating on {args.dataset_name} Dataset...")
 
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
-        if args.rices_type == "text":
-            cached_features = torch.load(
+
+        cached_features = torch.load(
                 f"{args.cached_demonstration_features}/text_{args.dataset_name}_new.pkl", map_location="cpu"
-            )
+        )
     else:
         cached_features = None
 
-    for shot in args.shots:
-        batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])
-        print(f"Now evaluating on {batch_size} samples...")
-        scores = []
-        for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            imagenet_score = evaluate_clip(
-                args,
-                eval_model=eval_model,
-                num_shots=shot,
-                batch_size=batch_size,
-                seed=seed,
-                dataset_name=args.dataset_name,
-                cached_features=cached_features,
-            )
-            if args.rank == 0:
-                print(
-                    f"Shots {shot} Trial {trial} "
-                    f"ImageNet score: {imagenet_score}"
-                )
-                scores.append(imagenet_score)
+    device_id = eval_model.device
+    del eval_model.model
+    torch.cuda.empty_cache()
 
-        if args.rank == 0:
-            print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
-            results["imagenet"].append(
-                {
-                    "shots": shot,
-                    "trials": scores,
-                    "mean": np.nanmean(scores),
-                    "stddev": np.nanstd(scores),
-                }
-            )
-
-    if args.rank == 0 and args.results_file is not None:
-        with open(args.results_file, "a") as f:
-            json.dump(results, f)
-
+    batch_size = args.batch_size
+    print(f"Now evaluating on {batch_size} samples...")
+    scores = []
+    for seed, _ in zip(args.trial_seeds, range(args.num_trials)):
+        acc = evaluate_clip(
+            args,
+            batch_size=batch_size,
+            seed=seed,
+            device=device_id,
+            dataset_name=args.dataset_name,
+            cached_features=cached_features,
+        )
+        print(f"{args.dataset_name} Acc: {acc}")
+            
+        scores.append(acc)
 
 def evaluate_clip(
     args: argparse.Namespace,
-    eval_model: BaseEvalModel,
     batch_size: int,
     seed: int = 42,
-    num_shots: int = 8,
+    device: str='cpu',
     dataset_name: str = "imagenet",
     cached_features=None,
 ):
@@ -270,27 +224,25 @@ def evaluate_clip(
         batch_size,
     )
     templates = OPENAI_IMAGENET_TEMPLATES 
-    if args.rices_type == "text":
-        print("rices_text has been activated...")
-        rices_text_labels = RICES_Text(
+
+    print("rices_text has been activated...")
+    rices_text_labels = RICES_Text(
             train_dataset,
             all_class_names,
             templates,
-            eval_model.device,
+            device,
             batch_size,
             cached_features=cached_features,
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
-    else:
-        # subset of the training set to sample context images from
-        query_set = utils.get_query_set(train_dataset, args.query_set_size)
+
 
     utils.random_seed(seed, args.rank)
     results = np.array([])
     # print(len(test_dataloader))
     sum_correct = 0
-    for batch_idx, batch in tqdm(
+    for _, batch in tqdm(
         enumerate(test_dataloader),total=len(test_dataloader)
     ):       
         _,indices = rices_text_labels.find(batch["image"], 1)

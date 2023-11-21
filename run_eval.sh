@@ -4,15 +4,15 @@ export MASTER_ADDR='localhost'
 export MASTER_PORT=$(shuf -i 0-65535 -n 1)
 export PYTHONPATH="$PYTHONPATH:open_flamingo"
 
-LM_PATH= # llama model path 
-LM_TOKENIZER_PATH= # llama model path
-CKPT_PATH= # ckeckpoint path
+LM_PATH="" # llama model path 
+LM_TOKENIZER_PATH="" # llama model path
+CKPT_PATH="" # ckeckpoint path
 VISION_ENCODER="ViT-L-14"
 VISION_ENCODER_PRETRAINED='openai'
-CACHED_PATH= # cache path
+CACHED_PATH="" # cache path
 
-DATA_PATH= # data path
-DATA_NAME= # data name
+DATA_PATH="" # data path
+DATA_NAME="imagenet" # data name
 
 # DATA_NAME="cub200"
 

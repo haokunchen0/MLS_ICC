@@ -9,6 +9,8 @@ This repository includes the PyTorch implementation for our CVPR 2024 paper.
 
 * [Introduction](#introduction)
 * [Getting Started](#getting-started)
+    - [Evaluation of In-Context Classification](#evaluation-of-in-context-classification)
+    - [Generation of Visual Description](#generation-of-visual-description)
 * [Datasets](#datasets)
 * [Citation](#citation)
 * [Acknowledgements](#acknowledgements)
@@ -36,10 +38,15 @@ Download the OpenFlamingo v2 3B model from this [link](https://huggingface.co/op
 
 Before starting the evaluation, make sure to cache both the image features (please refer to `cache_rices_image_features.py`) and textual features (please refer to `cache_rices_text_features.py`).
 
+Use command:
+```bash
+python open_flamingo/eval/cache_rices_xxx_features.py --dataset_root xxx --output_dir xxx --batch_size xxx 
+```
+### Evaluation of In-Context Classification
 Then, you can run the following command to evaluate the performance of in-context classification using OpenFlamingo. See `run_eval.sh` for more details.
 
 ```bash
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 export MASTER_ADDR='localhost'
 export MASTER_PORT=$(shuf -i 0-65535 -n 1)
 export PYTHONPATH="$PYTHONPATH:open_flamingo"
@@ -80,6 +87,7 @@ python open_flamingo/eval/evaluate.py \
     # --shots, shots of ICE examples.
     # The above running code is using the LDE(DD) method under the RICES method
 ```
+### Generation of Visual Description
 If you want to generate visual description, please use the following command and change the prompt for discription in 'openflamingo/eval/models/open_flamingo.py' for your own custom discriptive prompt.
 
 ```bash
@@ -103,10 +111,7 @@ python open_flamingo/eval/description.py \
     --cross_attn_every_n_layers 1 \
     --cached_demonstration_features $CACHED_PATH \
 ```
-If you want to get the text or image features from dataset, use command:
-```bash
-python open_flamingo/eval/cache_rices_xxx_features.py --dataset_root xxx --output_dir xxx --batch_size xxx 
-```
+
 
 ## Datasets
 [ImageNet](https://www.image-net.org/download.php),  [CUB-200](http://www.vision.caltech.edu/datasets/cub_200_2011/), [Stanford Dogs](http://vision.stanford.edu/aditya86/ImageNetDogs/) and  [Stanford Cars](https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset) are chosen for evaluation.

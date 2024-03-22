@@ -53,6 +53,7 @@ class EvalModel(BaseEvalModel):
             checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
+        self.model = self.model.half()
         self.model.to(self.device)
         self.model.eval()
         self.tokenizer.padding_side = "left"

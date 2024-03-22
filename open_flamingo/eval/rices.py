@@ -31,12 +31,10 @@ class RICES_Image:
         vision_encoder_path="ViT-L-14",
         vision_encoder_pretrained="openai",
         cached_features=None,
-        label_distribution=False
     ):
         self.dataset = dataset
         self.device = device
         self.batch_size = batch_size
-        self.label_distribution = label_distribution
         
         # Load the model and processor
         vision_encoder, _, image_processor = open_clip.create_model_and_transforms(

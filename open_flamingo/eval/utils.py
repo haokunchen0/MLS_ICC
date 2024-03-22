@@ -111,6 +111,8 @@ def get_cast_dtype(precision: str):
         cast_dtype = torch.bfloat16
     elif precision == "fp16":
         cast_dtype = torch.float16
+    elif precision == "fp32":
+        cast_dtype = torch.float32
     return cast_dtype
 
 

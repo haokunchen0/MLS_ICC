@@ -15,16 +15,14 @@ class LabelDistributionEnhancement:
         vision_encoder_path="ViT-L-14",
         vision_encoder_pretrained="openai",
         cached_features=None,
-        label_distribution=False,
-        only_probability=False,
+        LDE_type=None
     ):
         self.dataset = dataset
         self.text_label = text_label
         self.templates = templates
         self.device = device
         self.batch_size = batch_size
-        self.label_distribution = label_distribution
-        self.only_probability = only_probability
+        self.LDE_type = LDE_type
         
         # Load the model and tokenizer
         self.model, _, self.image_processor = open_clip.create_model_and_transforms(
@@ -189,20 +187,21 @@ class LabelDistributionEnhancement:
             return final_indices
         
         else:
-            if self.label_distribution:
-
+            if self.LDE_type == "EL":
+                similar_texts = [[self.text_label[i] for i in row] for row in final_indices]
+                return similar_texts
+        
+            else:
                 combined_texts = []
                 for label_row, prob_row in zip(final_indices, final_probs):
-                    if self.only_probability:
+                    if self.LDE_type == "DL":
                         combined = [f" { prob*100:.2f}%{self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
-                    else:
+                    elif self.LDE_type == "DD":
                         combined = [f" but may have { prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
                     combined_texts.append(combined)
                 return combined_texts
            
-            else:
-                similar_texts = [[self.text_label[i] for i in row] for row in final_indices]
-                return similar_texts
+
         
     def find_similar_labelswithSimilarity(self, query_texts, num_similar=1):
         """

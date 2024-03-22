@@ -60,7 +60,7 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-parser.add_argument("--batch_size_map", type=str, default="0:10,1:20,2:8,4:6,8:4,16:2")
+parser.add_argument("--batch_size_map", type=str, default="0:256,1:128,2:64,4:32,8:16,16:8")
 
 parser.add_argument(
     "--classification_prompt_ensembling",
@@ -71,21 +71,6 @@ parser.add_argument(
     "--rices_type",
     default=None,
     help="Type to use RICES for evaluation, image or text. If none, uses random demonstrations.",
-)
-parser.add_argument(
-    "--method_type",
-    default="normal",
-    help="Label Distribution Enhancement."
-)
-parser.add_argument(
-    "--Label_Distribution",
-    action="store_true",
-    help="Whether to use LD to add probability for labels.",
-)
-parser.add_argument(
-    "--ensemble",
-    action="store_true",
-    help="VDE+LDE"
 )
 parser.add_argument(
     "--rices_vision_encoder_path",
@@ -109,16 +94,15 @@ parser.add_argument(
     default=None,
     help="for LDE image to label..."
 )
-
 parser.add_argument(
-    "--description",
-    action="store_true",
-    help="Whether use Visual Description Enhancement."
+    "--method_type",
+    default="SL",
+    help="SL/LDE/VDE/ensemble."
 )
 parser.add_argument(
-    "--OP",
-    action="store_true",
-    help="Only Probability which is LDE(DL)"
+    "--LDE_type",
+    default="EL",
+    help="EL/DL/DD"
 )
 
 # Dataset arguments
@@ -156,6 +140,13 @@ def parse_batch_size_map(batch_size_map_str):
         mapping[int(shot)] = int(batch_size)
     return mapping
 
+parser.add_argument(
+    "--device",
+    type=int,
+    default=0,
+    help="device of GPUs.",
+)
+
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
@@ -184,17 +175,15 @@ def main():
 
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
-        
         cached_features = torch.load(
-            f"{args.cached_demonstration_features}/{args.rices_type}_{args.dataset_name}.pkl", map_location="cpu"
+            f"{args.cached_demonstration_features}/image_{args.dataset_name}.pkl", map_location="cpu"
         )
-
     else:
         cached_features = None
 
-    if args.method_type != "normal":
+    if args.method_type != "SL":
         label_cached_features = torch.load(
-                f"/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
+                f"/data/zihan/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
             )
     else:
         label_cached_features = None    
@@ -323,8 +312,6 @@ def evaluate_classification(
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
     )
-    if args.OP:
-        print("Only Probability...")
     # Choose rices types
     if args.rices_type == "image":
         print("rices has been activated...")
@@ -341,9 +328,7 @@ def evaluate_classification(
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
         
     # Enhancement methods.
-    if args.Label_Distribution:
-        print("Label Distribution is activated...")
-    if args.method_type == "ML":
+    if args.method_type == "LDE" or args.method_type == "ensemble":
         print("Label_Distribution_Enhancement is activated...")
 
         enhancement = LabelDistributionEnhancement(
@@ -355,8 +340,7 @@ def evaluate_classification(
             cached_features=label_cached_features,
             vision_encoder_path=args.rices_vision_encoder_path,
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
-            label_distribution=args.Label_Distribution,
-            only_probability=args.OP,
+            LDE_type=args.LDE_type,
         )
         
     utils.random_seed(seed, args.rank)
@@ -392,11 +376,9 @@ def evaluate_classification(
                     context_images = []
                 batch_images.append(context_images + [batch["image"][i]])
                 
-                if args.method_type == "normal" or args.ensemble:
-                    if args.description:
-                        context_text = "".join([eval_model.get_imagenet_prompt_with_des(description[x["class_id"]], label=x["class_name"]) for x in batch_demo_samples[i]])
-                    else:
-                        context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                if args.method_type == "VDE" or args.method_type == "ensemble":
+                    context_text = "".join([eval_model.get_imagenet_prompt_with_des(description[x["class_id"]], label=x["class_name"]) for x in batch_demo_samples[i]])
+
                     # Keep the text but remove the image tags for the zero-shot case
                     if num_shots == 0:
                         context_text = context_text.replace("<image>", "")
@@ -410,9 +392,8 @@ def evaluate_classification(
                         + prompt_fn({"class_name": None})
                     )
 
-                if args.method_type == "ML":
+                if args.method_type == "LDE" or args.method_type == "ensemble":
                     true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
-                    true_labels_des_for_cbatch = [description[x['class_id']] for x in batch_demo_samples[i]]
 
                     similar_labels_for_batch = enhancement.MultilabelwithSimilarity([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1)
 
@@ -425,18 +406,13 @@ def evaluate_classification(
                     # Connect the tags of each image
                     labels_for_each_image = [",".join(labels) for labels in combined_labels_for_batch]
 
-                        # Use the prompt_fn function to generate a prompt for each image.
+                    # Use the prompt_fn function to generate a prompt for each image.
                     prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
-
-                    if args.description:
-                        # prompts_for_each_image = [eval_model.get_imagenet_prompt_with_des_new(description, labels) for description,labels in zip(true_labels_des_for_cbatch, labels_for_each_image)]
-                        prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
-                    else:
-                        prompts_for_each_image = [prompt_fn({"class_name": labels}) for labels in labels_for_each_image]
                     context_text = "".join(prompts_for_each_image)
+                    # Keep the text but remove the image tags for the zero-shot case
                     if num_shots == 0:
                         context_text = context_text.replace("<image>", "")
-                        # Keep the text but remove the image tags for the zero-shot case
+
                     batch_text.append(
                         context_text
                         + prompt_fn({"class_name": None})
@@ -445,11 +421,21 @@ def evaluate_classification(
                         context_text
                         + prompt_fn({"class_name": None})
                     )
+                else:
+                    context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                    if num_shots == 0:
+                        context_text = context_text.replace("<image>", "")
+                        # Keep the text but remove the image tags for the zero-shot case
+                    batch_text.append(
+                        context_text
+                        + prompt_fn({"class_name": None})
+                        )
+                    
             if cnt == 0:
-                print(vde_text[0], lde_text[0])
+                print((vde_text[0], lde_text[0]) if args.method_type == "ensemble" else context_text[0])
                 cnt += 1
             # get predicted class names
-            if args.ensemble:
+            if args.method_type == "ensemble":
                 logprobs.append(
                     eval_model.get_rank_classifications(
                         vde_text,

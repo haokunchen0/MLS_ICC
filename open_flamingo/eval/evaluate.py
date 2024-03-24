@@ -183,7 +183,7 @@ def main():
 
     if args.method_type != "SL":
         label_cached_features = torch.load(
-                f"/data/zihan/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
+                f"/home/chk/data/icl/text_{args.dataset_name}_new.pkl", map_location="cpu"
             )
     else:
         label_cached_features = None    
@@ -421,7 +421,7 @@ def evaluate_classification(
                         context_text
                         + prompt_fn({"class_name": None})
                     )
-                else:
+                if args.method_type == "SL":
                     context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
                     if num_shots == 0:
                         context_text = context_text.replace("<image>", "")
@@ -432,7 +432,7 @@ def evaluate_classification(
                         )
                     
             if cnt == 0:
-                print((vde_text[0], lde_text[0]) if args.method_type == "ensemble" else context_text[0])
+                print((vde_text[0], lde_text[0]) if args.method_type == "ensemble" else batch_text[0])
                 cnt += 1
             # get predicted class names
             if args.method_type == "ensemble":

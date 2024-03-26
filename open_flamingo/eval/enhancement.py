@@ -151,6 +151,8 @@ class LabelDistributionEnhancement:
         Get the ranked text descriptions based on similarity to the image but 
         avoid returning labels that match the true_labels of the images.
         """
+        if self.LDE_type == "EL":
+            return None
         self.model.eval()
 
         with torch.no_grad():

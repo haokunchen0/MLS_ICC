@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--model",
     type=str,
-    help="Model name. Currently only `OpenFlamingo` is supported.",
+    help="Model name. Currently only `OpenFlamingo` and `Idefics` is supported.",
     default="open_flamingo",
 )
 parser.add_argument(
@@ -97,12 +97,12 @@ parser.add_argument(
 parser.add_argument(
     "--method_type",
     default="SL",
-    help="SL/LDE/VDE/ensemble/(RL)."
+    help="SL/LDE/VDE/ensemble."
 )
 parser.add_argument(
     "--LDE_type",
     default="EL",
-    help="EL/DL/DD/(RP)"
+    help="EL/DL/DD/(RL)/(RP)"
 )
 
 # Dataset arguments
@@ -163,15 +163,12 @@ def main():
     eval_model.set_device(device_id)
     eval_model.init_distributed()
 
-    if args.model != "open_flamingo" and args.shots != [0]:
-        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
-
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
 
     results = defaultdict(list)
 
-    print(f"Evaluating on {args.dataset_name} Dataset...")
+    print(f"Evaluating {args.model} on {args.dataset_name} Dataset...")
 
     # load cached demonstration features for RICES
     if args.cached_demonstration_features is not None:
@@ -250,12 +247,6 @@ def evaluate_classification(
     Returns:
         float: accuracy score
     """
-    
-        
-    if args.model != "open_flamingo":
-        raise NotImplementedError(
-            "evaluate_classification is currently only supported for OpenFlamingo"
-        )
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.dataset_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.dataset_root, "val"))
@@ -329,7 +320,6 @@ def evaluate_classification(
         
     # Enhancement methods.
     if args.method_type == "LDE" or args.method_type == "ensemble":
-        print("Label_Distribution_Enhancement is activated...")
 
         enhancement = LabelDistributionEnhancement(
             train_dataset,
@@ -394,15 +384,17 @@ def evaluate_classification(
 
                 if args.method_type == "LDE" or args.method_type == "ensemble":
                     true_labels_for_current_batch = [x['class_name'] for x in batch_demo_samples[i]]
-
-                    similar_labels_for_batch = enhancement.MultilabelwithSimilarity([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1)
-
+                    if args.LDE_type == "RL":
+                        similar_labels_for_batch = [[random.choice(all_class_names) for _ in true_labels_for_current_batch]]
+                    else:
+                        similar_labels_for_batch = enhancement.MultilabelwithSimilarity([x['image'] for x in batch_demo_samples[i]], true_labels_for_current_batch, 1)
+                    
                     # Combine real tags with similar tags
                     combined_labels_for_batch = []
                     for true_label, similar_labels in zip(true_labels_for_current_batch, similar_labels_for_batch):
-
                         combined_labels = [true_label] + similar_labels
                         combined_labels_for_batch.append(combined_labels)
+
                     # Connect the tags of each image
                     labels_for_each_image = [",".join(labels) for labels in combined_labels_for_batch]
 
@@ -442,6 +434,8 @@ def evaluate_classification(
                         )
                     
             if cnt == 0:
+                print("*"*20)
+                print("Prompt Example:")
                 print((vde_text[0], lde_text[0]) if args.method_type == "ensemble" else batch_text[0])
                 cnt += 1
             # get predicted class names

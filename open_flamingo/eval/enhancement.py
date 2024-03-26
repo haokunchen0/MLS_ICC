@@ -1,5 +1,6 @@
 import open_clip
 import torch
+import random
 from typing import Sequence, Callable, Union
 
 
@@ -196,6 +197,9 @@ class LabelDistributionEnhancement:
                 for label_row, prob_row in zip(final_indices, final_probs):
                     if self.LDE_type == "DL":
                         combined = [f" { prob*100:.2f}%{self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
+                    elif self.LDE_type == "RP":
+                        random_probs = [random.random() for _ in label_row]
+                        combined = [f" {prob*100:.2f}%{self.text_label[i]}" for i, prob in zip(label_row, random_probs)]
                     elif self.LDE_type == "DD":
                         combined = [f" but may have { prob*100:.2f}% probability of being {self.text_label[i]}" for i, prob in zip(label_row, prob_row)]
                     combined_texts.append(combined)

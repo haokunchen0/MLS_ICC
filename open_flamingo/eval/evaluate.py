@@ -97,12 +97,12 @@ parser.add_argument(
 parser.add_argument(
     "--method_type",
     default="SL",
-    help="SL/LDE/VDE/ensemble."
+    help="SL/LDE/VDE/ensemble/(RL)."
 )
 parser.add_argument(
     "--LDE_type",
     default="EL",
-    help="EL/DL/DD"
+    help="EL/DL/DD/(RP)"
 )
 
 # Dataset arguments
@@ -423,6 +423,16 @@ def evaluate_classification(
                     )
                 if args.method_type == "SL":
                     context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                    if num_shots == 0:
+                        context_text = context_text.replace("<image>", "")
+                        # Keep the text but remove the image tags for the zero-shot case
+                    batch_text.append(
+                        context_text
+                        + prompt_fn({"class_name": None})
+                        )
+                if args.method_type == "RL":
+                    modified_batch_demo_samples = [{**x, 'class_name': random.choice(all_class_names)} if 'class_name' in x else x for x in batch_demo_samples[i]]
+                    context_text = "".join([prompt_fn(x) for x in modified_batch_demo_samples])
                     if num_shots == 0:
                         context_text = context_text.replace("<image>", "")
                         # Keep the text but remove the image tags for the zero-shot case

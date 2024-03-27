@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--model",
     type=str,
-    help="Model name. Currently only `OpenFlamingo` and `Idefics` is supported.",
+    help="Model name. Currently only `OpenFlamingo` and `idefics` is supported.",
     default="open_flamingo",
 )
 parser.add_argument(
@@ -60,7 +60,7 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-parser.add_argument("--batch_size_map", type=str, default="0:256,1:128,2:64,4:32,8:16,16:8")
+parser.add_argument("--batch_size_map", type=str, default="0:256,1:192,2:96,4:48,8:32,16:8")
 
 parser.add_argument(
     "--classification_prompt_ensembling",
@@ -155,13 +155,15 @@ def main():
     model_args = {
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
     }
+    print(model_args)
     eval_model = module.EvalModel(model_args)
 
-    # set up distributed evaluation
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
-    device_id = init_distributed_device(args)
-    eval_model.set_device(device_id)
-    eval_model.init_distributed()
+    if args.model == "open_flamingo":
+        # set up distributed evaluation
+        args.local_rank, args.rank, args.world_size = world_info_from_env()
+        device_id = init_distributed_device(args)
+        eval_model.set_device(device_id)
+        eval_model.init_distributed()
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
@@ -333,7 +335,7 @@ def evaluate_classification(
             LDE_type=args.LDE_type,
         )
         
-    utils.random_seed(seed, args.rank)
+    utils.random_seed(seed)
     predictions = []
     cnt=0
     for _, batch in tqdm(

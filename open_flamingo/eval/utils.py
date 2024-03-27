@@ -52,13 +52,23 @@ def prepare_eval_samples(test_dataset, num_samples, batch_size):
     """
     random_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
     dataset = torch.utils.data.Subset(test_dataset, random_indices)
-    sampler = torch.utils.data.distributed.DistributedSampler(dataset)
-    loader = torch.utils.data.DataLoader(
+    try:
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+        loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
         collate_fn=custom_collate_fn,
     )
+    except RuntimeError as e:
+        dataset = torch.utils.data.Subset(test_dataset, random_indices)
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,  # Enable shuffling for non-distributed loading
+            collate_fn=custom_collate_fn,
+            num_workers=4,
+        )
     return loader
 
 

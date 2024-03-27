@@ -60,7 +60,7 @@ parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
-parser.add_argument("--batch_size_map", type=str, default="0:256,1:192,2:96,4:48,8:32,16:8")
+parser.add_argument("--batch_size_map", type=str, default="0:256,1:128,2:64,4:48,8:32,16:8")
 
 parser.add_argument(
     "--classification_prompt_ensembling",
@@ -191,9 +191,9 @@ def main():
         results = {f"{args.dataset_name}": []}
         batch_size = args.batch_size_map.get(shot, args.batch_size_map[0])
         print(f"Now evaluating on {batch_size} samples...")
-        scores = []
+        scores, scores_vde, scores_lde, scores_ensemble = [], [], [], []
         for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            classification_score = evaluate_classification(
+            classification_scores = evaluate_classification(
                 args,
                 eval_model=eval_model,
                 num_shots=shot,
@@ -205,20 +205,46 @@ def main():
                 use_prompt_ensembling=args.classification_prompt_ensembling,
             )
             if args.rank == 0:
-                print(
-                    f"Shots {shot} Trial {trial} "
-                    f"{args.dataset_name} score: {classification_score}"
-                )
-                scores.append(classification_score)
+                if args.method_type == "ensemble":
+                    print(
+                        f"Shots {shot} Trial {trial} "
+                        f"{args.dataset_name} VDE score: {classification_scores[0]}, "
+                        f"LDE score: {classification_scores[1]}, "
+                        f"Ensemble score: {classification_scores[2]}"
+                    )
+                    scores_vde.append(classification_scores[0])
+                    scores_lde.append(classification_scores[1])
+                    scores_ensemble.append(classification_scores[2])
+                else:
+                    print(
+                        f"Shots {shot} Trial {trial} "
+                        f"{args.dataset_name} score: {classification_scores}"
+                    )
+                    scores.append(classification_scores)
 
         if args.rank == 0:
-            print(f"Shots {shot} Mean {args.dataset_name} score: {np.nanmean(scores)}")
-            results[f"{args.dataset_name}"].append(
-                {
+            if args.method_type == "ensemble":
+                # Aggregate and print scores for each method separately
+                mean_score_vde = np.nanmean(scores_vde)
+                mean_score_lde = np.nanmean(scores_lde)
+                mean_score_ensemble = np.nanmean(scores_ensemble)
+                print(f"Shots {shot} Mean {args.dataset_name} VDE score: {mean_score_vde}")
+                print(f"Shots {shot} Mean {args.dataset_name} LDE score: {mean_score_lde}")
+                print(f"Shots {shot} Mean {args.dataset_name} Ensemble score: {mean_score_ensemble}")
+                results[f"{args.dataset_name}"].append({
                     "shots": shot,
-                    "acc": scores,
-                }
-            )
+                    "acc_vde": scores_vde,
+                    "acc_lde": scores_lde,
+                    "acc_ensemble": scores_ensemble,
+                })
+            else:
+                # Non-ensemble mode, handle as before
+                mean_score = np.nanmean(scores)  # Use scores_vde as the general scores list
+                print(f"Shots {shot} Mean {args.dataset_name} score: {mean_score}")
+                results[f"{args.dataset_name}"].append({
+                    "shots": shot,
+                    "acc": scores,  # Again, using scores_vde for consistency
+                })
             if args.results_file is not None:
                 with open(args.results_file, "a") as f:
                     json.dump(results, f)
@@ -337,6 +363,9 @@ def evaluate_classification(
         
     utils.random_seed(seed)
     predictions = []
+    lde_predictions = []
+    vde_predictions = []
+    ens_predictions = []
     cnt=0
     for _, batch in tqdm(
         enumerate(test_dataloader),
@@ -355,6 +384,9 @@ def evaluate_classification(
             min(6, math.factorial(effective_num_shots)) if use_prompt_ensembling else 1
         )
         logprobs = []
+        lde_logprobs = []
+        vde_logprobs = []
+        ens_logprobs = []
         for _ in range(num_permutations):
             batch_images, batch_text = [], []
             vde_text, lde_text = [], []
@@ -424,16 +456,6 @@ def evaluate_classification(
                         context_text
                         + prompt_fn({"class_name": None})
                         )
-                if args.method_type == "RL":
-                    modified_batch_demo_samples = [{**x, 'class_name': random.choice(all_class_names)} if 'class_name' in x else x for x in batch_demo_samples[i]]
-                    context_text = "".join([prompt_fn(x) for x in modified_batch_demo_samples])
-                    if num_shots == 0:
-                        context_text = context_text.replace("<image>", "")
-                        # Keep the text but remove the image tags for the zero-shot case
-                    batch_text.append(
-                        context_text
-                        + prompt_fn({"class_name": None})
-                        )
                     
             if cnt == 0:
                 print("*"*20)
@@ -442,19 +464,22 @@ def evaluate_classification(
                 cnt += 1
             # get predicted class names
             if args.method_type == "ensemble":
-                logprobs.append(
-                    eval_model.get_rank_classifications(
-                        vde_text,
-                        batch_images,
-                        all_class_names,
-                        normalize_length=True,
-                    ) + eval_model.get_rank_classifications(
+                lde_logprob = eval_model.get_rank_classifications(
                         lde_text,
                         batch_images,
                         all_class_names,
                         normalize_length=True,
-                    )
                 )
+                vde_logprob = eval_model.get_rank_classifications(
+                        vde_text,
+                        batch_images,
+                        all_class_names,
+                        normalize_length=True,
+                )
+                lde_logprobs.append(lde_logprob)
+                vde_logprobs.append(vde_logprob)
+                ens_logprobs.append(lde_logprob + vde_logprob)
+
             else:
                 logprobs.append(
                     eval_model.get_rank_classifications(
@@ -464,46 +489,140 @@ def evaluate_classification(
                         normalize_length=True,
                     )
                 )
-
-        # ensemble logprobs together
-        logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
-            
-        predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
-            logprobs,
-            k,
-            class_id_to_name,
-        )
-        # compute accuracy
-        for i, topk in enumerate(predicted_classnames):
-            y_i = batch["class_name"][i]
-            score = torch.exp(
-                predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
-            ).item()
-            predictions.append(
-                {
-                    "id": batch["id"][i],
-                    "gt_label": y_i,
-                    "pred_label": topk[0],
-                    "gt_id":batch['class_id'][i],
-                    "pred_score": score,
-                }
+        if args.method_type == "ensemble":
+            # ensemble logprobs together
+            lde_logprobs = torch.mean(torch.stack(lde_logprobs, dim=-1), dim=-1)
+            vde_logprobs = torch.mean(torch.stack(vde_logprobs, dim=-1), dim=-1)
+            ens_logprobs = torch.mean(torch.stack(ens_logprobs, dim=-1), dim=-1)
+            lde_predicted_classnames, lde_predicted_logprobs = utils.get_predicted_classnames(
+                lde_logprobs,
+                k,
+                class_id_to_name,
             )
+            for i, topk in enumerate(lde_predicted_classnames):
+                y_i = batch["class_name"][i]
+                score = torch.exp(
+                    lde_predicted_logprobs[i][0] - torch.logsumexp(lde_logprobs[i], dim=0)
+                ).item()
+                lde_predictions.append(
+                    {
+                        "id": batch["id"][i],
+                        "gt_label": y_i,
+                        "pred_label": topk[0],
+                        "gt_id":batch['class_id'][i],
+                        "pred_score": score,
+                    }
+                )
+            vde_predicted_classnames, vde_predicted_logprobs = utils.get_predicted_classnames(
+                vde_logprobs,
+                k,
+                class_id_to_name,
+            )
+            for i, topk in enumerate(vde_predicted_classnames):
+                y_i = batch["class_name"][i]
+                score = torch.exp(
+                    vde_predicted_logprobs[i][0] - torch.logsumexp(vde_logprobs[i], dim=0)
+                ).item()
+                vde_predictions.append(
+                    {
+                        "id": batch["id"][i],
+                        "gt_label": y_i,
+                        "pred_label": topk[0],
+                        "gt_id":batch['class_id'][i],
+                        "pred_score": score,
+                    }
+                )
+            ens_predicted_classnames, ens_predicted_logprobs = utils.get_predicted_classnames(
+                ens_logprobs,
+                k,
+                class_id_to_name,
+            )
+            for i, topk in enumerate(ens_predicted_classnames):
+                y_i = batch["class_name"][i]
+                score = torch.exp(
+                    ens_predicted_logprobs[i][0] - torch.logsumexp(ens_logprobs[i], dim=0)
+                ).item()
+                ens_predictions.append(
+                    {
+                        "id": batch["id"][i],
+                        "gt_label": y_i,
+                        "pred_label": topk[0],
+                        "gt_id":batch['class_id'][i],
+                        "pred_score": score,
+                    }
+                )
+        else:
+            # ensemble logprobs together
+            logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
+                
+            predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
+                logprobs,
+                k,
+                class_id_to_name,
+            )
+            # compute accuracy
+            for i, topk in enumerate(predicted_classnames):
+                y_i = batch["class_name"][i]
+                score = torch.exp(
+                    predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
+                ).item()
+                predictions.append(
+                    {
+                        "id": batch["id"][i],
+                        "gt_label": y_i,
+                        "pred_label": topk[0],
+                        "gt_id":batch['class_id'][i],
+                        "pred_score": score,
+                    }
+                )
+    if args.method_type == "ensemble":
+        all_lde_predictions = [None for _ in range(args.world_size)]
+        torch.distributed.all_gather_object(all_lde_predictions, lde_predictions)
+        if args.rank != 0:
+            return
+        all_lde_predictions = [
+            item for sublist in all_lde_predictions for item in sublist
+        ]
+        acc1 = sum(
+            int(pred["gt_label"] == pred["pred_label"]) for pred in all_lde_predictions
+        )
+        all_vde_predictions = [None for _ in range(args.world_size)]
+        torch.distributed.all_gather_object(all_vde_predictions, vde_predictions)
+        if args.rank != 0:
+            return
+        all_vde_predictions = [
+            item for sublist in all_vde_predictions for item in sublist
+        ]
+        acc2 = sum(
+            int(pred["gt_label"] == pred["pred_label"]) for pred in all_vde_predictions
+        )
+        all_ens_predictions = [None for _ in range(args.world_size)]
+        torch.distributed.all_gather_object(all_ens_predictions, ens_predictions)
+        if args.rank != 0:
+            return
+        all_ens_predictions = [
+            item for sublist in all_ens_predictions for item in sublist
+        ]  
+        acc3 = sum(
+            int(pred["gt_label"] == pred["pred_label"]) for pred in all_ens_predictions
+        )
+        return [float(acc1) / len(all_lde_predictions), float(acc2) / len(all_vde_predictions), float(acc3) / len(all_ens_predictions)]
+    else:
+        # all gather
+        all_predictions = [None for _ in range(args.world_size)]
+        torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
+        if args.rank != 0:
+            return
 
-    # all gather
-    all_predictions = [None for _ in range(args.world_size)]
-    torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
-    if args.rank != 0:
-        return
+        all_predictions = [
+            item for sublist in all_predictions for item in sublist
+        ]  # flatten
 
-    all_predictions = [
-        item for sublist in all_predictions for item in sublist
-    ]  # flatten
-
-    # return top-1 accuracy
-    acc1 = sum(
-        int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions
-    )
-    return float(acc1) / len(all_predictions)
+        # return top-1 accuracy
+        acc1 = sum(
+            int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions
+        )
+        return float(acc1) / len(all_predictions)
 
 
 if __name__ == "__main__":
